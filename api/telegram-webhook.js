@@ -40,30 +40,32 @@ module.exports = async (req, res) => {
     const username = (joinReq.chat && joinReq.chat.username) || '';
     const chatId = joinReq.chat && joinReq.chat.id != null ? String(joinReq.chat.id) : '';
     /* 1. Record the confirmed join against the page(s) using this channel —
-       matched by public username, or by numeric channel ID (private channels). */
+       matched by public username, or by numeric channel ID (private channels).
+       Pages are fetched and matched in JS: a PostgREST `tracking->>channelId`
+       filter silently misses values that look numeric (e.g. -1001234567890),
+       because the `->>` text result gets compared as a number. */
     if ((username || chatId) && SUPABASE_URL && KEY && typeof fetch === 'function') {
       try {
-        const lookups = [];
-        if (username) lookups.push(sb('pages?' + encodeURIComponent('tracking->>channel') + '=eq.' + encodeURIComponent(username) + '&select=id'));
-        if (chatId) lookups.push(sb('pages?' + encodeURIComponent('tracking->>channelId') + '=eq.' + encodeURIComponent(chatId) + '&select=id'));
-        const pageIds = new Set();
-        for (const r of await Promise.all(lookups)) {
-          if (r.ok) {
-            const pages = await r.json();
-            (Array.isArray(pages) ? pages : []).forEach(pg => { if (pg && pg.id) pageIds.add(String(pg.id)); });
-          }
-        }
-        for (const pid of pageIds) {
-          await sb('events', {
-            method: 'POST',
-            body: JSON.stringify([{
-              id: rid(), page_id: pid, type: 'join',
-              label: '', url: 'https://t.me/' + (username || ''),
-              visitor: 'tg_' + String((joinReq.from && joinReq.from.id) || ''),
-              utm_source: '', utm_medium: '', utm_campaign: '', ts: Date.now()
-            }])
+        const r = await sb('pages?select=id,tracking&limit=500');
+        if (r.ok) {
+          const pages = await r.json();
+          const pageIds = new Set();
+          (Array.isArray(pages) ? pages : []).forEach(pg => {
+            const t = (pg && pg.tracking) || {};
+            if ((username && t.channel === username) || (chatId && String(t.channelId || '') === chatId)) pageIds.add(String(pg.id));
           });
-          console.log('[banaopage/webhook] recorded confirmed join for page', pid);
+          for (const pid of pageIds) {
+            await sb('events', {
+              method: 'POST',
+              body: JSON.stringify([{
+                id: rid(), page_id: pid, type: 'join',
+                label: '', url: 'https://t.me/' + (username || ''),
+                visitor: 'tg_' + String((joinReq.from && joinReq.from.id) || ''),
+                utm_source: '', utm_medium: '', utm_campaign: '', ts: Date.now()
+              }])
+            });
+            console.log('[banaopage/webhook] recorded confirmed join for page', pid);
+          }
         }
       } catch (err) {
         console.error('[banaopage/webhook] join record failed (non-fatal):', err.message);
