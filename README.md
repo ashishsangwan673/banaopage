@@ -64,6 +64,7 @@ Your own landing page, hosted anywhere, can use BanaoPage tracking with ONE line
 - Dashboard → **↗ External page**: register your page (name, address, your page URL, Telegram channel) and copy the ready-made snippet.
 - Or any page row → **Embed code** copies the snippet for that page.
 - The snippet reports views, button clicks and Telegram join clicks to your dashboard for that page. It never throws and never blocks your page.
+- Optional: add your Meta Pixel ID (fires PageView + Lead on your page) and your Telegram Bot Token (for confirmed joins). For a private (invite-link) channel, also add its Channel ID — forward any channel message to @getmyid_bot to get it.
 - Opening `banaopage.vercel.app/<address>` redirects to your real page.
 
 ## Features
