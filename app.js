@@ -23,18 +23,49 @@ function fallbackCopy(text, done) { const ta = document.createElement('textarea'
 function defaultDB() { return { users: [], session: null, pages: [], events: [], leads: [], seeded: false }; }
 function loadDB() { try { const raw = localStorage.getItem(DB_KEY); if (raw) return JSON.parse(raw); } catch (e) { console.warn('DB parse failed, resetting', e); } return defaultDB(); }
 let DB = loadDB();
+migrateDB();
 function saveDB() { try { localStorage.setItem(DB_KEY, JSON.stringify(DB)); } catch (e) { toast('Could not save — browser storage full or blocked'); } }
 function currentUser() { return DB.users.find(u => u.id === DB.session) || null; }
 function planOf(user) { return user ? (user.plan || 'free') : 'free'; }
+/* Real Pagebanao tiers (pagebanao.com/pricing, checked 15 Nov 2026). Yearly = ~20% off monthly x12. */
 const PLANS = {
-  free:    { name: 'Free',    price: 0,   pages: 3,        smart: 1 },
-  starter: { name: 'Starter', price: 499, pages: 10,       smart: 2 },
-  pro:     { name: 'Pro',     price: 999, pages: Infinity, smart: 10 }
+  free:    { name: 'Free',         monthly: 0,     yearly: 0,      pages: 3,        smart: 1,  templates: 5,   analyticsDays: 7,        csv: false, utm: false },
+  starter: { name: 'Starter',      monthly: 1999,  yearly: 19190,  pages: 7,        smart: 2,  templates: 20,  analyticsDays: 30,       csv: true,  utm: false },
+  growth:  { name: 'Growth',       monthly: 4999,  yearly: 47990,  pages: 20,       smart: 8,  templates: 50,  analyticsDays: 90,       csv: true,  utm: true },
+  pro:     { name: 'Business Pro', monthly: 14999, yearly: 143990, pages: Infinity, smart: 50, templates: 100, analyticsDays: Infinity, csv: true,  utm: true }
 };
+let billingCycle = 'monthly'; /* 'monthly' | 'yearly' — homepage pricing toggle */
+function planPrice(plan) { return billingCycle === 'yearly' ? plan.yearly : plan.monthly; }
+function planPriceLabel(plan) {
+  if (!plan.monthly) return '₹0';
+  if (billingCycle === 'yearly') return '₹' + plan.yearly.toLocaleString('en-IN');
+  return '₹' + plan.monthly.toLocaleString('en-IN');
+}
+function planPeriodLabel(plan) {
+  if (!plan.monthly) return '/ forever';
+  return billingCycle === 'yearly' ? '/ year (save 20%)' : '/ month';
+}
+/* Migrate pages created by older versions: mode / htmlCode / history fields. */
+function migrateDB() {
+  if (!DB.pages) DB.pages = [];
+  DB.pages.forEach(p => {
+    if (!p.mode) p.mode = 'blocks';
+    if (p.htmlCode == null) p.htmlCode = '';
+    if (!Array.isArray(p.history)) p.history = [];
+    if (!p.tracking) p.tracking = { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null };
+    if (!Array.isArray(p.blocks)) p.blocks = [];
+  });
+}
 function smartPages(user) { return DB.pages.filter(p => p.owner === user.id && p.tracking && p.tracking.smart); }
 
 function logEvent(pageId, type, extra) {
   const ev = Object.assign({ id: uid(), pageId, type, ts: Date.now(), visitor: visitorId() }, extra || {});
+  if (type === 'view') {
+    try {
+      const q = new URLSearchParams(location.search);
+      ev.utm_source = q.get('utm_source') || ''; ev.utm_medium = q.get('utm_medium') || ''; ev.utm_campaign = q.get('utm_campaign') || '';
+    } catch (e) { /* URLSearchParams unavailable — skip UTM */ }
+  }
   DB.events.push(ev); saveDB(); return ev;
 }
 
@@ -52,7 +83,11 @@ const BLOCK_TYPES = [
   { type: 'form', icon: '📋', label: 'Lead Form', def: () => ({ title: 'Get the details on WhatsApp', sub: 'Fill this in — we will message you within an hour.', btnLabel: 'Send Details', success: 'Thanks! We will message you soon.' }) },
   { type: 'video', icon: '🎬', label: 'Video Embed', def: () => ({ url: 'https://www.youtube.com/embed/dQw4w9WgXcQ', title: 'Watch this first' }) },
   { type: 'divider', icon: '➖', label: 'Divider', def: () => ({}) },
-  { type: 'telegram', icon: '✈️', label: 'Telegram Join Button', def: () => ({ channel: 'banaopage', label: 'Join our Telegram Channel', sub: 'Free signals, updates and support — inside Telegram.' }) }
+  { type: 'telegram', icon: '✈️', label: 'Telegram Join Button', def: () => ({ channel: 'banaopage', label: 'Join our Telegram Channel', sub: 'Free signals, updates and support — inside Telegram.' }) },
+  { type: 'rawhtml', icon: '</>', label: 'Raw HTML', def: () => ({ html: '<div style="text-align:center;padding:24px;background:#FFF7ED;border-radius:12px"><h3 style="margin:0 0 8px">Your custom HTML here</h3><p style="margin:0;color:#555">Paste any HTML / CSS / JS in the inspector — it goes live exactly as written.</p></div>', height: 200 }) },
+  { type: 'survey', icon: '📊', label: 'Survey / Question', def: () => ({ question: 'Which topic should I cover next?', options: ['Trading', 'Crypto', 'Stocks', 'Mutual Funds'] }) },
+  { type: 'social', icon: '🔗', label: 'Social Links', def: () => ({ links: [{ label: 'Telegram', url: 'https://t.me/banaopage' }, { label: 'Instagram', url: 'https://instagram.com/banaopage' }, { label: 'YouTube', url: 'https://youtube.com/@banaopage' }, { label: 'X', url: 'https://x.com/banaopage' }, { label: 'WhatsApp', url: 'https://wa.me/919999999999' }] }) },
+  { type: 'menu', icon: '🧭', label: 'Menu', def: () => ({ links: [{ label: 'Home', url: '#' }, { label: 'Pricing', url: '#pricing' }, { label: 'FAQ', url: '#faq' }, { label: 'Join Telegram', url: 'https://t.me/banaopage' }] }) }
 ];
 function newBlock(type) { const t = BLOCK_TYPES.find(b => b.type === type); return { id: uid(), type, data: t ? t.def() : {} }; }
 
@@ -69,7 +104,7 @@ function pageFromTemplate(tpl, owner) {
   const title = tpl.name + ' Page';
   return {
     id: uid(), owner, template: tpl.id, title, slug: slugify(title) + '-' + Math.random().toString(36).slice(2, 5),
-    seoTitle: title + ' | BanaoPage', seoDesc: tpl.desc, status: 'draft',
+    seoTitle: title + ' | BanaoPage', seoDesc: tpl.desc, status: 'draft', mode: 'blocks', htmlCode: '', history: [],
     blocks: tpl.blocks.map(b => newBlock(b)),
     tracking: { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null },
     createdAt: Date.now()
@@ -128,6 +163,49 @@ function loginDemo() { const r = login('demo@banaopage.in', 'demo1234'); if (r.o
 function requireAuth() { if (!currentUser()) { location.hash = '#/login'; return false; } return true; }
 
 /* ---------- Router ---------- */
+/* ---------- Subdomain / path routing ---------- */
+/* A page's slug IS its address: working link is /<slug>; the <slug>.banaopage.vercel.app
+   form is the same address once a custom domain with wildcard DNS is connected. */
+function subdomainFromHostname(host) {
+  if (!host) return null;
+  const h = String(host).toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost')) return null;
+  let m = h.match(/^([a-z0-9-]+)\.banaopage\.vercel\.app$/);
+  if (m) return m[1];
+  const parts = h.split('.');
+  /* <page>.<custom-domain> (3 labels, not a vercel.app host, not www) */
+  if (parts.length === 3 && parts[0] !== 'www' && !h.endsWith('.vercel.app')) return parts[0];
+  return null;
+}
+/* Returns the public page implied by the current URL (path or hostname), or null.
+   Only applies when no hash route is active — otherwise a hash navigation from a
+   /<slug> page would be trapped on the public page, since the pathname stays. */
+function resolvePublicPageFromUrl() {
+  const h = (location.hash || '').replace(/^#/, '');
+  if (h && h !== '/') return null;
+  const path = location.pathname.replace(/^\/+|\/+$/g, '');
+  if (path && !path.includes('/')) {
+    const byPath = DB.pages.find(x => x.slug === path);
+    if (byPath) return byPath;
+  }
+  const sub = subdomainFromHostname(location.hostname);
+  if (sub) {
+    const byHost = DB.pages.find(x => x.slug === sub);
+    if (byHost) return byHost;
+  }
+  return null;
+}
+function publicUrlFor(page) { return location.origin + '/' + page.slug; }
+function subdomainUrlFor(page) { return 'https://' + page.slug + '.banaopage.vercel.app'; }
+function slugStatus(slug, excludeId) {
+  const raw = String(slug || '');
+  if (!/[a-z0-9]/i.test(raw)) return { ok: false, msg: 'Type a page address — letters, numbers and hyphens only.' };
+  const s = slugify(slug);
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(s)) return { ok: false, msg: 'Use lowercase letters, numbers and hyphens only (must start with a letter or number).' };
+  if (DB.pages.some(x => x.id !== excludeId && x.slug === s)) return { ok: false, msg: '❌ "' + s + '" is already taken — try another name.' };
+  return { ok: true, msg: '✅ "' + s + '" is available — live at ' + location.origin + '/' + s };
+}
+
 function route() {
   const h = location.hash.replace(/^#/, '') || '/';
   const parts = h.split('/').filter(Boolean);
@@ -146,7 +224,10 @@ function render() {
   const app = $('#app');
   const user = currentUser();
   renderHeader(user);
+  document.body.classList.remove('public-mode');
   window.scrollTo(0, 0);
+  const urlPage = resolvePublicPageFromUrl();
+  if (urlPage) { renderPublicPage(urlPage.slug, app); return; }
   if (parts[0] === 'p' && parts[1]) { renderPublicPage(parts[1], app); return; }
   if (parts[0] === 'builder' && parts[1]) { renderBuilder(parts[1], app); return; }
   switch (parts[0] || '') {
@@ -179,16 +260,19 @@ function renderHeader(user) {
 
 /* ---------- Home ---------- */
 const FAQS = [
-  { q: 'What do I get on the Free plan?', a: '3 landing pages in total, and 1 Smart Tracking page on a 72-hour free trial. No card needed — just sign up and start building. When the trial ends, upgrade to Starter (₹499/mo) to keep Smart Tracking on.' },
+  { q: 'What do I get on the Free plan?', a: '3 landing pages in total, and 1 Smart Tracking page on a 72-hour free trial. No card needed — just sign up and start building. When the trial ends, upgrade to Starter (₹1,999/month) to keep Smart Tracking on.' },
   { q: 'What is Smart Tracking?', a: 'Normal page builders only count button clicks. Smart Tracking connects your Telegram bot and counts real join requests and confirmed joins — so you know how many people actually joined your channel, not just how many tapped the button.' },
-  { q: 'Do I need to know coding?', a: 'Bilkul nahi. Pick a template, click any block to edit its text, drag blocks to reorder, hit Publish. That is it — your page is live at banaopage.in/p/your-page.' },
+  { q: 'Do I need to know coding?', a: 'Bilkul nahi. Pick a template, click any block to edit its text, drag blocks to reorder, hit Publish. That is it — your page is live at banaopage.vercel.app/your-page. And if you DO have code, paste it with the Raw HTML block or the "Paste HTML" page — it goes live exactly as written.' },
   { q: 'What is the difference between a click and a join?', a: 'A click means someone tapped your Telegram button. A join request means Telegram actually received their request to join. A confirmed join means they are now a member. Clicks are easy to fake; joins are real.' },
+  { q: 'Can I use my own page address?', a: 'Yes. Every page gets its own address, like banaopage.vercel.app/trading-signals — you choose the name in the builder under SEO & Link, and it must be unique. The same name also works as trading-signals.banaopage.vercel.app once a custom domain with wildcard DNS is connected.' },
+  { q: 'Can I paste my own HTML code?', a: 'Yes. Use the "Paste HTML" option when creating a page, or add a Raw HTML block inside any page. Your code is rendered in a sandboxed frame and goes live exactly as written when you publish.' },
   { q: 'Are repeat join requests counted again?', a: 'By default, no — each person is counted once (unique). If you want, turn on "Count repeat requests" in the page\'s Tracking settings and every repeat request is counted too.' },
   { q: 'Can I collect leads from my page?', a: 'Yes. Add a Form block to any page. Every submission lands in your Leads inbox in the dashboard, with name and phone/email and the page it came from.' },
   { q: 'How do I connect my Telegram channel?', a: 'Create a bot with @BotFather, paste its token in the page\'s Tracking settings, add your channel username, and set the webhook URL we show you as your bot webhook. Then use "Test Telegram Bot" to verify the connection.' }
 ];
 function renderHome(app, anchor) {
   app.innerHTML = `
+  <div class="offer-banner">🎉 <b>Launch offer:</b> Free Smart Tracking on 2 landing pages till <b>30 Nov, 11:59 pm</b> — no payment needed.</div>
   <section class="hero">
     <div class="wrap">
       <span class="pill">✈️ Now with Smart Telegram Tracking</span>
@@ -217,6 +301,8 @@ function renderHome(app, anchor) {
         <div class="card"><div class="icon">📊</div><h3>Simple analytics</h3><p class="muted">Views, clicks, join requests and confirmed joins — per page, last 7 days, with CSV export.</p></div>
         <div class="card"><div class="icon">🎨</div><h3>6 ready templates</h3><p class="muted">Telegram channel, trading signals, course, ebook, product launch and webinar — start from one, make it yours.</p></div>
         <div class="card"><div class="icon">📋</div><h3>Lead forms built in</h3><p class="muted">Add a form block anywhere. Every submission lands in your Leads inbox automatically.</p></div>
+        <div class="card"><div class="icon">&lt;/&gt;</div><h3>Paste your own HTML</h3><p class="muted">Got code? Paste a full HTML page or drop a Raw HTML block into any page — it goes live exactly as written.</p></div>
+        <div class="card"><div class="icon">🌐</div><h3>Your own page address</h3><p class="muted">Every page gets its own address like /trading-signals — pick any available name, no extra cost.</p></div>
         <div class="card"><div class="icon">📱</div><h3>Mobile-first pages</h3><p class="muted">Every page is responsive. Preview desktop and mobile right inside the builder before you publish.</p></div>
       </div>
     </div>
@@ -247,26 +333,37 @@ function renderHome(app, anchor) {
   <section class="section soft" id="pricing">
     <div class="wrap">
       <h2 class="center">Simple, honest pricing</h2>
-      <p class="center muted">Start free. Upgrade only when you need more.</p>
-      <div class="grid grid-3" style="margin-top:30px">
-        <div class="price-card">
-          <h3>Free</h3><div class="price">₹0 <span>/ forever</span></div>
-          <ul><li>3 landing pages total</li><li>1 Smart Tracking page (72-hour trial)</li><li>All 6 templates</li><li>Lead forms + Leads inbox</li><li>Basic analytics</li></ul>
-          <a class="btn btn-block" href="#/signup">Start Free</a>
-        </div>
-        <div class="price-card popular">
-          <span class="pop-tag">MOST POPULAR</span>
-          <h3>Starter</h3><div class="price">₹499 <span>/ month</span></div>
-          <ul><li>10 landing pages</li><li>2 Smart Tracking pages</li><li>Everything in Free</li><li>Meta Pixel + Conversions API</li><li>CSV export</li></ul>
-          <button class="btn btn-primary btn-block" onclick="upgradePlan('starter')">Choose Starter</button>
-        </div>
-        <div class="price-card">
-          <h3>Pro</h3><div class="price">₹999 <span>/ month</span></div>
-          <ul><li>Unlimited landing pages</li><li>10 Smart Tracking pages</li><li>Everything in Starter</li><li>Priority support</li><li>Repeat-request counting</li></ul>
-          <button class="btn btn-block" onclick="upgradePlan('pro')">Choose Pro</button>
+      <p class="center muted">Start free. Grow when your community does. Yearly billing saves 20%.</p>
+      <div class="center" style="margin:18px 0 6px">
+        <div class="billing-toggle">
+          <button class="${billingCycle === 'monthly' ? 'active' : ''}" onclick="setBilling('monthly')">Monthly</button>
+          <button class="${billingCycle === 'yearly' ? 'active' : ''}" onclick="setBilling('yearly')">Yearly — save 20%</button>
         </div>
       </div>
-      <p class="center muted small" style="margin-top:16px">Prices in INR. Upgrades here are simulated in this demo — no payment is taken.</p>
+      <div class="grid grid-4" style="margin-top:26px">
+        <div class="price-card">
+          <h3>Free</h3><div class="price">₹0 <span>/ forever</span></div>
+          <ul><li>3 landing pages</li><li>1 Smart Tracking page (72-hour trial)</li><li>Drag-drop builder + own subdomain</li><li>Analytics — 7 days</li><li>5 templates</li><li>Email support</li></ul>
+          <a class="btn btn-block" href="#/signup">Start Free</a>
+        </div>
+        <div class="price-card">
+          <h3>Starter</h3><div class="price">${planPriceLabel(PLANS.starter)} <span>${planPeriodLabel(PLANS.starter)}</span>${billingCycle === 'yearly' ? '<span class="strike">₹23,988 / year</span>' : ''}</div>
+          <ul><li>7 landing pages</li><li>2 Smart Tracking pages</li><li>Analytics — 30 days + CSV export</li><li>20 templates</li><li>Chat + email support</li></ul>
+          <button class="btn btn-block" onclick="upgradePlan('starter')">Choose Starter</button>
+        </div>
+        <div class="price-card popular">
+          <span class="pop-tag">RECOMMENDED</span>
+          <h3>Growth</h3><div class="price">${planPriceLabel(PLANS.growth)} <span>${planPeriodLabel(PLANS.growth)}</span>${billingCycle === 'yearly' ? '<span class="strike">₹59,988 / year</span>' : ''}</div>
+          <ul><li>20 landing pages</li><li>8 Smart Tracking pages</li><li>Analytics — 90 days + CSV export</li><li>UTM source &amp; campaign reports</li><li>50 templates</li><li>Priority support</li></ul>
+          <button class="btn btn-primary btn-block" onclick="upgradePlan('growth')">Choose Growth</button>
+        </div>
+        <div class="price-card">
+          <h3>Business Pro</h3><div class="price">${planPriceLabel(PLANS.pro)} <span>${planPeriodLabel(PLANS.pro)}</span>${billingCycle === 'yearly' ? '<span class="strike">₹1,79,988 / year</span>' : ''}</div>
+          <ul><li>Unlimited pages (fair use)</li><li>50 Smart Tracking pages</li><li>Analytics — full history + CSV</li><li>UTM reports</li><li>100 templates</li><li>Chat + call + priority support</li></ul>
+          <button class="btn btn-block" onclick="upgradePlan('pro')">Choose Business Pro</button>
+        </div>
+      </div>
+      <p class="center muted small" style="margin-top:16px">Prices in INR. Meta Pixel (PageView) on all plans; Telegram join-request tracking + Meta Conversions API on all plans (Free only via the 72-hour trial). Upgrades here are simulated in this demo — no payment is taken.</p>
     </div>
   </section>
 
@@ -329,6 +426,7 @@ function renderDashboard(app) {
       <div><h2 style="margin:0">Dashboard</h2><p class="muted" style="margin:4px 0 0">${esc(user.name)} · ${esc(PLANS[planOf(user)].name)} plan</p></div>
       <div class="inline-row">
         <a class="btn" href="#/templates">+ New from template</a>
+        <button class="btn" onclick="createHtmlPage()">&lt;/&gt; Paste HTML</button>
         <button class="btn btn-primary" onclick="createBlankPage()">+ Blank page</button>
       </div>
     </div>
@@ -365,16 +463,19 @@ function renderDashboardList() {
   if (!pages.length) { el.innerHTML = '<div class="card center muted">No pages yet. Create your first page from a template or blank.</div>'; return; }
   el.innerHTML = pages.map(p => {
     const s = pageStats(p.id);
-    const url = location.origin + location.pathname + '#/p/' + p.slug;
+    const url = publicUrlFor(p);
+    const subUrl = subdomainUrlFor(p);
     return `<div class="page-row">
-      <div><div class="title">${esc(p.title)}</div>
-      <div class="small muted">/${esc(p.slug)} · ${p.template ? esc(p.template) : 'blank'} · created ${fmtDate(p.createdAt)}</div>
+      <div><div class="title">${esc(p.title)} ${p.mode === 'html' ? '<span class="tag tag-smart">&lt;/&gt; HTML</span>' : ''}</div>
+      <div class="small muted">/${esc(p.slug)} · ${p.mode === 'html' ? 'paste-HTML page' : (p.template ? esc(p.template) : 'blank')} · created ${fmtDate(p.createdAt)}</div>
       <div class="small" style="margin-top:4px"><span class="tag ${p.status === 'live' ? 'tag-live' : 'tag-draft'}">${p.status === 'live' ? '● Live' : '○ Draft'}</span>
       ${p.tracking && p.tracking.smart ? '<span class="tag tag-smart">✈️ Smart Tracking</span>' : ''}
-      <span class="muted"> ${s.views} views · ${s.clicks} clicks · ${s.joins} joins</span></div></div>
+      <span class="muted"> ${s.views} views · ${s.clicks} clicks · ${s.joins} joins</span></div>
+      <div class="small" style="margin-top:4px">🔗 <a href="${esc(url)}" target="_blank">${esc(url.replace(/^https?:\/\//, ''))}</a> · <span class="muted">subdomain: ${esc(subUrl.replace(/^https?:\/\//, ''))}</span></div></div>
       <div class="inline-row">
-        <a class="btn btn-sm" href="#/p/${esc(p.slug)}" target="_blank">View</a>
-        <button class="btn btn-sm" data-copy="${esc(url)}" data-copy-label="Public link">Copy link</button>
+        <a class="btn btn-sm" href="${esc(url)}" target="_blank">View</a>
+        <button class="btn btn-sm" data-copy="${esc(url)}" data-copy-label="Live link">Copy link</button>
+        <button class="btn btn-sm" onclick="exportPageHTML('${p.id}')">Export HTML</button>
         <a class="btn btn-sm btn-primary" href="#/builder/${p.id}">Edit</a>
         <button class="btn btn-sm" onclick="duplicatePage('${p.id}')">Duplicate</button>
         <button class="btn btn-sm btn-danger" onclick="deletePage('${p.id}')">Delete</button>
@@ -382,11 +483,50 @@ function renderDashboardList() {
     </div>`;
   }).join('');
 }
+const SAMPLE_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>My Offer Page</title>\n<style>\n  body { margin: 0; font-family: Arial, sans-serif; background: #0F172A; color: #fff; text-align: center; }\n  .box { max-width: 640px; margin: 0 auto; padding: 80px 20px; }\n  h1 { font-size: 42px; margin: 0 0 12px; }\n  p { color: #CBD5E1; font-size: 18px; }\n  a.btn { display: inline-block; margin-top: 24px; background: #22C55E; color: #fff;\n    padding: 16px 32px; border-radius: 999px; font-weight: bold; font-size: 18px; text-decoration: none; }\n</style>\n</head>\n<body>\n  <div class="box">\n    <h1>🔥 My Special Offer</h1>\n    <p>This is a complete HTML page pasted into BanaoPage. Edit this code —<br>change the text, colours and link — then publish it.</p>\n    <a class="btn" href="https://t.me/banaopage" target="_blank">Join on Telegram →</a>\n  </div>\n</body>\n</html>';
+function createHtmlPage() {
+  const user = currentUser(); if (!user) return;
+  const plan = PLANS[planOf(user)];
+  if (myPages(user).length >= plan.pages) { toast('Page limit reached on the ' + plan.name + ' plan. Upgrade in Settings.'); return; }
+  const p = { id: uid(), owner: user.id, template: 'html', title: 'My HTML Page', slug: slugify('my-html-page-' + Math.random().toString(36).slice(2, 5)), seoTitle: 'My HTML Page | BanaoPage', seoDesc: 'A page built by pasting raw HTML.', status: 'draft', mode: 'html', htmlCode: SAMPLE_HTML, history: [], blocks: [], tracking: { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null }, createdAt: Date.now() };
+  DB.pages.push(p); saveDB(); toast('HTML page created — paste your code'); location.hash = '#/builder/' + p.id; render();
+}
+function downloadFile(name, content, type) {
+  const blob = new Blob([content], { type: type || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+/* Standalone .html export of a block-built page (no JS — countdowns/forms stay inert). */
+const EXPORT_CSS = 'body{margin:0;font-family:Arial,sans-serif;color:#111827;line-height:1.55}' +
+  '.blk-hero{padding:56px 24px;text-align:center}.blk-hero h1{margin:0 0 10px}.blk-hero p{color:#4B5563;max-width:560px;margin:0 auto 18px}' +
+  '.blk-text{padding:22px 26px}.blk-image{padding:10px 26px}.blk-image img{max-width:100%;border-radius:12px;display:block;margin:0 auto}' +
+  '.blk-cta{padding:22px 26px;text-align:center}.btn{display:inline-block;background:#4F46E5;color:#fff;padding:13px 28px;border-radius:10px;font-weight:700;text-decoration:none}' +
+  '.blk-features{padding:28px 26px}.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.feat{border:1px solid #E5E7EB;border-radius:12px;padding:16px}' +
+  '.blk-testimonial{padding:28px 26px;text-align:center;font-style:italic}.blk-pricing{padding:28px 26px;text-align:center}.blk-faq{padding:24px 26px}' +
+  '.blk-countdown{padding:28px 26px;text-align:center}.blk-form{padding:26px;max-width:460px;margin:0 auto}.blk-form input{width:100%;padding:10px;border:1px solid #E5E7EB;border-radius:10px;margin:6px 0}' +
+  '.blk-video{padding:16px 26px}.blk-video iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px}.blk-divider hr{border:none;border-top:1px solid #E5E7EB}' +
+  '.blk-telegram{padding:26px;text-align:center;background:#EEF2FF}.tg-btn{display:inline-block;background:#229ED9;color:#fff;font-weight:700;padding:13px 26px;border-radius:999px;text-decoration:none}' +
+  '.blk-survey{padding:26px;text-align:center}.survey-opt{border:1px solid #4F46E5;background:#fff;color:#4F46E5;border-radius:999px;padding:10px 20px;font-weight:700;margin:4px}' +
+  '.social-row{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:20px 26px}.social-btn{border:1px solid #E5E7EB;border-radius:999px;padding:9px 18px;font-weight:700;color:#111827;text-decoration:none}' +
+  '.menu-row{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;padding:16px 26px;border-bottom:1px solid #E5E7EB}.menu-row a{color:#111827;font-weight:600;text-decoration:none}' +
+  '.align-left{text-align:left}.align-center{text-align:center}.align-right{text-align:right}.center{text-align:center}.muted{color:#6B7280}.small{font-size:.85rem}';
+function buildExportHTML(p) {
+  if (p.mode === 'html') return p.htmlCode || '';
+  const body = p.blocks.map(b => blockHTML(b, p, 'public')).join('\n');
+  return '<!DOCTYPE html>\n<!-- Exported from BanaoPage — countdowns and forms are inert in this file; use the live page for tracking. -->\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>' + esc(p.seoTitle || p.title) + '</title>\n<meta name="description" content="' + esc(p.seoDesc || '') + '">\n<style>\n' + EXPORT_CSS + '\n</style>\n</head>\n<body>\n' + body + '\n</body>\n</html>';
+}
+function exportPageHTML(id) {
+  const p = DB.pages.find(x => x.id === id); if (!p) return;
+  downloadFile(p.slug + '.html', buildExportHTML(p), 'text/html');
+  toast('Downloaded ' + p.slug + '.html');
+}
 function createBlankPage() {
   const user = currentUser(); if (!user) return;
   const plan = PLANS[planOf(user)];
   if (myPages(user).length >= plan.pages) { toast('Page limit reached on the ' + plan.name + ' plan. Upgrade in Settings.'); return; }
-  const p = { id: uid(), owner: user.id, template: 'blank', title: 'Untitled Page', slug: slugify('untitled-' + Math.random().toString(36).slice(2, 5)), seoTitle: 'Untitled Page | BanaoPage', seoDesc: '', status: 'draft', blocks: [newBlock('hero'), newBlock('text'), newBlock('button')], tracking: { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null }, createdAt: Date.now() };
+  const p = { id: uid(), owner: user.id, template: 'blank', title: 'Untitled Page', slug: slugify('untitled-' + Math.random().toString(36).slice(2, 5)), seoTitle: 'Untitled Page | BanaoPage', seoDesc: '', status: 'draft', mode: 'blocks', htmlCode: '', history: [], blocks: [newBlock('hero'), newBlock('text'), newBlock('button')], tracking: { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null }, createdAt: Date.now() };
   DB.pages.push(p); saveDB(); toast('Blank page created'); location.hash = '#/builder/' + p.id; render();
 }
 function duplicatePage(id) {
@@ -408,16 +548,26 @@ function deletePage(id) {
 /* ---------- Templates ---------- */
 function renderTemplates(app) {
   const user = currentUser();
+  const plan = PLANS[planOf(user)];
+  const freeLimit = plan.templates;
   app.innerHTML = `
   <div class="wrap page-pad">
     <h2>Choose a template</h2>
-    <p class="muted">Click any template to create a page from it. You can change every block afterwards.</p>
+    <p class="muted">Click any template to create a page from it. You can change every block afterwards. Your ${esc(plan.name)} plan includes ${freeLimit} template(s) — 6 built-in templates are live now, more are being added (20 on Starter, 50 on Growth, 100 on Business Pro).</p>
     <div class="grid grid-3" style="margin-top:20px">
-      ${TEMPLATES.map(t => `<div class="card tpl-card" onclick="createFromTemplate('${t.id}')">
+      <div class="card tpl-card" onclick="createHtmlPage()">
+        <div class="tpl-thumb">&lt;/&gt;</div>
+        <h3>Paste your own HTML</h3><p class="muted small">Paste a complete HTML page — it goes live exactly as written. No blocks, no limits.</p>
+        <span class="small" style="color:var(--indigo);font-weight:700">Use HTML mode →</span>
+      </div>
+      ${TEMPLATES.map((t, i) => {
+        const locked = i >= freeLimit;
+        return `<div class="card tpl-card ${locked ? 'locked-card' : ''}" ${locked ? 'onclick="toast(\'This template needs a paid plan — upgrade in Settings.\');location.hash=\'#/settings\';render();"' : 'onclick="createFromTemplate(\'' + t.id + '\')"'}>
+        ${locked ? '<span class="lock-badge">🔒 ' + esc(plan.name) + ' — upgrade</span>' : ''}
         <div class="tpl-thumb">${t.emoji}</div>
         <h3>${esc(t.name)}</h3><p class="muted small">${esc(t.desc)}</p>
-        <span class="small" style="color:var(--indigo);font-weight:700">Use this template →</span>
-      </div>`).join('')}
+        <span class="small" style="color:var(--indigo);font-weight:700">${locked ? 'Locked — upgrade to unlock →' : 'Use this template →'}</span>
+      </div>`; }).join('')}
     </div>
     <p style="margin-top:20px"><a class="btn" href="#/dashboard">← Back to dashboard</a> <button class="btn" onclick="createBlankPage()">Or start blank</button></p>
   </div>`;
@@ -430,6 +580,7 @@ function createFromTemplate(tplId) {
   const p = pageFromTemplate(tpl, user.id);
   DB.pages.push(p); saveDB(); toast(tpl.name + ' page created'); location.hash = '#/builder/' + p.id; render();
 }
+function setBilling(cycle) { billingCycle = cycle; renderHome($('#app'), 'pricing'); }
 function upgradePlan(planKey) {
   const user = currentUser();
   if (!user) { toast('Create a free account first, then upgrade.'); location.hash = '#/signup'; render(); return; }
@@ -471,6 +622,11 @@ function blockHTML(b, page, mode) {
     case 'divider': return `<section class="blk-divider"><hr></section>`;
     case 'telegram': return `<section class="blk-telegram"><h2>${esc(d.label || 'Join our Telegram Channel')}</h2><p class="muted">${esc(d.sub || '')}</p>
       <a class="tg-btn" href="https://t.me/${esc(d.channel || 'banaopage')}" target="_blank" rel="noopener" data-tg-join data-page="${page ? page.id : ''}" data-channel="${esc(d.channel || 'banaopage')}">✈️ Join @${esc(d.channel || 'banaopage')}</a></section>`;
+    case 'rawhtml': return `<section class="blk-raw"><iframe sandbox="allow-scripts" srcdoc="${esc(d.html || '')}" style="height:${parseInt(d.height, 10) || 200}px" title="Custom HTML"></iframe></section>`;
+    case 'survey': return `<section class="blk-survey"><h2>${esc(d.question || 'What do you think?')}</h2><p class="muted">Tap an answer — it is saved to the page owner's Leads inbox.</p>
+      <div class="survey-opts">${(d.options || []).map(o => `<button class="survey-opt" data-survey-opt data-page="${page ? page.id : ''}" data-question="${esc(d.question || '')}" data-answer="${esc(o)}">${esc(o)}</button>`).join('')}</div></section>`;
+    case 'social': return `<section class="social-row">${(d.links || []).map(l => `<a class="social-btn" href="${esc(l.url || '#')}" target="_blank" rel="noopener" data-cta data-page="${page ? page.id : ''}" data-url="${esc(l.url || '#')}">${esc(l.label || 'Link')}</a>`).join('')}</section>`;
+    case 'menu': return `<nav class="menu-row">${(d.links || []).map(l => `<a href="${esc(l.url || '#')}" data-cta data-page="${page ? page.id : ''}" data-url="${esc(l.url || '#')}">${esc(l.label || 'Link')}</a>`).join('')}</nav>`;
     default: return `<section class="blk-text"><p class="muted">Unknown block: ${esc(b.type)}</p></section>`;
   }
 }
@@ -491,6 +647,15 @@ setInterval(tickCountdowns, 1000);
 /* Global click delegation: CTA clicks, Telegram join, lead forms */
 document.addEventListener('click', e => {
   if (e.target.closest('#builder-canvas')) return; // builder canvas: selection only, no tracking
+  const sv = e.target.closest('[data-survey-opt]');
+  if (sv) {
+    const pageId = sv.getAttribute('data-page');
+    DB.leads.push({ id: uid(), pageId, kind: 'survey', name: '📊 Survey answer', contact: sv.getAttribute('data-answer') || '', question: sv.getAttribute('data-question') || '', ts: Date.now() });
+    logEvent(pageId, 'click', { label: 'survey_answer', answer: sv.getAttribute('data-answer') || '' });
+    saveDB();
+    toast('Thanks! Your answer was recorded.');
+    return;
+  }
   const tg = e.target.closest('[data-tg-join]');
   if (tg) {
     const pageId = tg.getAttribute('data-page');
@@ -573,16 +738,114 @@ function undoBuilder() {
 }
 function saveBuilder(silent) {
   const p = builderPage(); if (!p) return;
+  if (!silent) pushHistory(p);
   saveDB();
   const el = $('#autosave'); if (el) el.textContent = 'Saved ✓ ' + new Date().toLocaleTimeString('en-IN');
   if (!silent) toast('Page saved');
+}
+/* ---------- Page history (last 5 saved snapshots) ---------- */
+function pushHistory(p) {
+  if (!p) return;
+  p.history = p.history || [];
+  const snap = { ts: Date.now(), title: p.title, blocks: JSON.parse(JSON.stringify(p.blocks || [])), htmlCode: p.htmlCode || '' };
+  const last = p.history[p.history.length - 1];
+  if (last && JSON.stringify(last.blocks) === JSON.stringify(snap.blocks) && last.htmlCode === snap.htmlCode && last.title === snap.title) return;
+  p.history.push(snap);
+  if (p.history.length > 5) p.history = p.history.slice(-5);
+}
+function showHistory() {
+  const p = builderPage(); if (!p) return;
+  const items = (p.history || []).slice().reverse();
+  $('#modal-root').innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <h3 style="margin-top:0">🕘 Page history</h3>
+      <p class="muted small">Last ${p.history.length} saved version(s). Restoring replaces the current page content.</p>
+      ${items.length ? items.map((s, ri) => {
+        const i = p.history.length - 1 - ri;
+        return `<div class="history-item"><div><b>${esc(s.title || 'Untitled')}</b><p class="small muted">${fmtDT(s.ts)} · ${(s.blocks || []).length} block(s)${p.mode === 'html' ? ' · HTML page' : ''}</p></div>
+        <button class="btn btn-sm" onclick="restoreSnapshot(${i})">Restore</button></div>`;
+      }).join('') : '<p class="muted">No saved versions yet — hit Save and a snapshot will appear here.</p>'}
+      <button class="btn btn-block" style="margin-top:8px" onclick="closeModal()">Close</button>
+    </div>
+  </div>`;
+}
+function restoreSnapshot(i) {
+  const p = builderPage(); if (!p) return;
+  const s = (p.history || [])[i]; if (!s) return;
+  pushHistory(p);
+  p.title = s.title; p.blocks = JSON.parse(JSON.stringify(s.blocks || [])); p.htmlCode = s.htmlCode || '';
+  saveDB(); closeModal(); toast('Restored version from ' + fmtDT(s.ts));
+  render();
+}
+/* ---------- Raw-HTML page builder ---------- */
+function renderHtmlBuilder(p, app) {
+  B.pageId = p.id;
+  const url = publicUrlFor(p);
+  app.innerHTML = `
+  <div class="builder">
+    <aside class="palette">
+      <h4>&lt;/&gt; HTML Page</h4>
+      <p class="small muted">Paste a <b>complete HTML document</b> — it goes live exactly as written when you publish. Scripts run inside a sandboxed frame, so your code can never break the BanaoPage dashboard.</p>
+      <button class="btn btn-sm btn-block" onclick="useSampleHtml()">Use sample page</button>
+      <button class="btn btn-sm btn-block" style="margin-top:8px" onclick="toggleHtmlPreview()">👁 Preview HTML</button>
+      <button class="btn btn-sm btn-block" style="margin-top:8px" onclick="exportPageHTML('${p.id}')">⬇ Export HTML</button>
+      <hr style="margin:16px 0">
+      <a class="btn btn-sm btn-block" href="#/dashboard">← Dashboard</a>
+      <a class="btn btn-sm btn-block" href="${esc(url)}" target="_blank" style="margin-top:8px">View live page ↗</a>
+    </aside>
+    <div class="canvas-col">
+      <div class="builder-bar">
+        <b>${esc(p.title)}</b>
+        <span class="tag ${p.status === 'live' ? 'tag-live' : 'tag-draft'}">${p.status === 'live' ? '● Live' : '○ Draft'}</span>
+        <span class="autosave" id="autosave"></span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" onclick="showHistory()">🕘 History</button>
+        <button class="btn btn-sm" onclick="saveBuilder()">💾 Save</button>
+        <button class="btn btn-sm ${p.status === 'live' ? '' : 'btn-emerald'}" onclick="togglePublish()">${p.status === 'live' ? 'Unpublish' : 'Publish'}</button>
+        <button class="btn btn-sm btn-primary" data-copy="${esc(url)}" data-copy-label="Live link">Copy link</button>
+      </div>
+      <label style="margin-top:0">Your HTML code</label>
+      <textarea id="html-editor" class="code-editor" spellcheck="false" oninput="updateHtmlCode(this.value)"></textarea>
+      <div id="html-preview-wrap" style="margin-top:16px">
+        <h4 style="margin:0 0 8px">Preview</h4>
+        <iframe id="html-preview-frame" class="html-preview-frame" sandbox="allow-scripts" title="HTML preview"></iframe>
+      </div>
+      <p class="small muted center" style="margin-top:12px">Edits autosave · Preview updates as you type · Publish to make it live</p>
+    </div>
+    <aside class="inspector" id="inspector"></aside>
+  </div>`;
+  const ed = $('#html-editor'); if (ed) ed.value = p.htmlCode || '';
+  const fr = $('#html-preview-frame'); if (fr) fr.srcdoc = p.htmlCode || '';
+  renderInspector();
+  saveBuilder(true);
+}
+function updateHtmlCode(v) {
+  const p = builderPage(); if (!p) return;
+  p.htmlCode = v; saveDB(); saveBuilder(true);
+  const fr = $('#html-preview-frame'); if (fr) fr.srcdoc = v;
+}
+function useSampleHtml() {
+  const p = builderPage(); if (!p) return;
+  pushUndoLight();
+  p.htmlCode = SAMPLE_HTML; saveDB(); saveBuilder(true);
+  const ed = $('#html-editor'); if (ed) ed.value = SAMPLE_HTML;
+  const fr = $('#html-preview-frame'); if (fr) fr.srcdoc = SAMPLE_HTML;
+  toast('Sample HTML loaded — edit it and publish');
+}
+function toggleHtmlPreview() {
+  const w = $('#html-preview-wrap'); if (!w) return;
+  const hidden = w.style.display === 'none';
+  w.style.display = hidden ? '' : 'none';
+  if (hidden) { const p = builderPage(); const fr = $('#html-preview-frame'); if (fr && p) fr.srcdoc = p.htmlCode || ''; }
 }
 function renderBuilder(pageId, app) {
   const user = currentUser();
   const p = DB.pages.find(x => x.id === pageId && x.owner === (user && user.id));
   if (!p) { app.innerHTML = '<div class="wrap page-pad"><div class="card">Page not found or not yours. <a href="#/dashboard">Back to dashboard</a></div></div>'; return; }
+  if (p.mode === 'html') { renderHtmlBuilder(p, app); return; }
   B.pageId = pageId; if (!p.blocks.some(b => b.id === B.selected)) B.selected = null;
-  const url = location.origin + location.pathname + '#/p/' + p.slug;
+  const url = publicUrlFor(p);
   app.innerHTML = `
   <div class="builder">
     <aside class="palette">
@@ -591,7 +854,7 @@ function renderBuilder(pageId, app) {
       ${BLOCK_TYPES.map(t => `<button class="palette-btn" onclick="addBlock('${t.type}')">${t.icon} ${t.label}</button>`).join('')}
       <hr style="margin:16px 0">
       <a class="btn btn-sm btn-block" href="#/dashboard">← Dashboard</a>
-      <a class="btn btn-sm btn-block" href="#/p/${esc(p.slug)}" target="_blank" style="margin-top:8px">View live page ↗</a>
+      <a class="btn btn-sm btn-block" href="${esc(url)}" target="_blank" style="margin-top:8px">View live page ↗</a>
     </aside>
     <div class="canvas-col">
       <div class="builder-bar">
@@ -604,9 +867,11 @@ function renderBuilder(pageId, app) {
           <button class="${B.device === 'mobile' ? 'active' : ''}" onclick="setDevice('mobile')">📱 Mobile</button>
         </div>
         <button class="btn btn-sm" onclick="undoBuilder()" title="Undo last change">↩ Undo</button>
+        <button class="btn btn-sm" onclick="showHistory()">🕘 History</button>
+        <button class="btn btn-sm" onclick="exportPageHTML('${p.id}')">⬇ Export HTML</button>
         <button class="btn btn-sm" onclick="saveBuilder()">💾 Save</button>
         <button class="btn btn-sm ${p.status === 'live' ? '' : 'btn-emerald'}" onclick="togglePublish()">${p.status === 'live' ? 'Unpublish' : 'Publish'}</button>
-        <button class="btn btn-sm btn-primary" data-copy="${esc(url)}" data-copy-label="Public link">Copy link</button>
+        <button class="btn btn-sm btn-primary" data-copy="${esc(url)}" data-copy-label="Live link">Copy link</button>
       </div>
       <div class="canvas ${B.device === 'mobile' ? 'mobile' : ''}" id="builder-canvas"></div>
       <p class="small muted center" style="margin-top:12px">Click a block to edit it · Drag blocks to reorder · Changes autosave when you edit fields</p>
@@ -679,6 +944,7 @@ function delBlock(id) {
 }
 function togglePublish() {
   const p = builderPage(); if (!p) return;
+  pushHistory(p);
   p.status = p.status === 'live' ? 'draft' : 'live';
   saveDB(); toast(p.status === 'live' ? 'Published! Your page is live.' : 'Unpublished — page now shows "not published"');
   render();
@@ -695,6 +961,14 @@ function updateBlockList(field, text) {
   const b = selectedBlock(); if (!b) return;
   pushUndoLight();
   b.data[field] = text.split('\n').map(s => s.trim()).filter(Boolean);
+  saveDB(); renderBuilderCanvas(); saveBuilder(true);
+}
+function updateLinkList(field, text) {
+  const b = selectedBlock(); if (!b) return;
+  pushUndoLight();
+  b.data[field] = text.split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+    const parts = line.split('|'); return { label: (parts[0] || '').trim(), url: (parts[1] || '#').trim() };
+  });
   saveDB(); renderBuilderCanvas(); saveBuilder(true);
 }
 function updateFaqItems(text) {
@@ -716,7 +990,9 @@ function renderInspector() {
   if (B.tab === 'seo') { el.innerHTML = tabs + renderSeoTab(p); return; }
   if (B.tab === 'tracking') { el.innerHTML = tabs + renderTrackingTab(p); return; }
   const b = selectedBlock();
-  if (!b) { el.innerHTML = tabs + '<p class="muted">Click any block on the canvas to edit it here.</p><h4>Page</h4><label>Page title</label><input value="' + esc(p.title) + '" oninput="renamePage(this.value)"><p class="small muted">Title is shown in your dashboard and in the browser tab of the public page.</p>'; return; }
+  if (!b) {
+    if (p.mode === 'html') { el.innerHTML = tabs + '<h4>HTML page</h4><p class="muted">Edit your code in the big editor on the left. It renders in the preview below it and goes live exactly as written when you publish.</p><h4>Page</h4><label>Page title</label><input value="' + esc(p.title) + '" oninput="renamePage(this.value)"><p class="small muted">Use the SEO &amp; Link tab to change the page address, and Tracking to connect Telegram / Meta.</p>'; return; }
+    el.innerHTML = tabs + '<p class="muted">Click any block on the canvas to edit it here.</p><h4>Page</h4><label>Page title</label><input value="' + esc(p.title) + '" oninput="renamePage(this.value)"><p class="small muted">Title is shown in your dashboard and in the browser tab of the public page.</p>'; return; }
   const d = b.data || {};
   let fields = '<h4>' + esc((BLOCK_TYPES.find(t => t.type === b.type) || {}).label || b.type) + ' block</h4>';
   if (b.type === 'hero') fields += fieldRow('Headline', 'title', d.title) + `<label>Subtext</label><textarea rows="3" oninput="updateBlockField('sub', this.value)">${esc(d.sub)}</textarea>` + fieldRow('Button label', 'btnLabel', d.btnLabel) + fieldRow('Button link', 'btnUrl', d.btnUrl) + fieldRow('Background colour', 'bg', d.bg, 'color') + fieldRow('Text colour', 'color', d.color, 'color') + alignRow(d.align);
@@ -732,6 +1008,10 @@ function renderInspector() {
   else if (b.type === 'video') fields += fieldRow('Section title', 'title', d.title) + fieldRow('YouTube URL', 'url', d.url);
   else if (b.type === 'divider') fields += '<p class="muted">A simple horizontal line. Nothing to edit.</p>';
   else if (b.type === 'telegram') fields += fieldRow('Channel username (without @)', 'channel', d.channel) + fieldRow('Heading', 'label', d.label) + fieldRow('Subtext', 'sub', d.sub) + '<p class="small muted">The button opens t.me/' + esc(d.channel || '…') + ' and logs a click. With Smart Tracking on, join requests are tracked too.</p>';
+  else if (b.type === 'rawhtml') fields += `<label>HTML / CSS / JS code</label><textarea class="code-editor" style="min-height:220px" rows="10" onchange="updateBlockField('html', this.value)">${esc(d.html || '')}</textarea><p class="small muted">Renders in a sandboxed frame — your code can never break the dashboard. Applied when you leave this box.</p>` + fieldRow('Frame height (px)', 'height', d.height, 'number');
+  else if (b.type === 'survey') fields += fieldRow('Question', 'question', d.question) + `<label>Answer options (one per line, 2–4)</label><textarea rows="4" oninput="updateBlockList('options', this.value)">${esc((d.options || []).join('\n'))}</textarea><p class="small muted">On the live page, each tap is saved to your Leads inbox as a survey answer.</p>`;
+  else if (b.type === 'social') fields += `<label>Social links — one per line, as "Label | URL"</label><textarea rows="5" oninput="updateLinkList('links', this.value)">${esc((d.links || []).map(l => l.label + ' | ' + l.url).join('\n'))}</textarea><p class="small muted">Telegram, Instagram, YouTube, X, WhatsApp — whatever you list becomes a button.</p>`;
+  else if (b.type === 'menu') fields += `<label>Menu links — one per line, as "Label | URL"</label><textarea rows="4" oninput="updateLinkList('links', this.value)">${esc((d.links || []).map(l => l.label + ' | ' + l.url).join('\n'))}</textarea>`;
   fields += '<hr style="margin:18px 0"><div class="inline-row"><button class="btn btn-sm" onclick="dupBlock(\'' + b.id + '\')">Duplicate block</button><button class="btn btn-sm btn-danger" onclick="delBlock(\'' + b.id + '\')">Delete block</button></div>';
   el.innerHTML = tabs + fields;
 }
@@ -744,23 +1024,32 @@ function alignRow(current) {
 function setInspectorTab(t) { B.tab = t; renderInspector(); }
 function renamePage(v) { const p = builderPage(); if (!p) return; p.title = v; saveDB(); saveBuilder(true); const b = $('.builder-bar b'); if (b) b.textContent = v || 'Untitled'; }
 function renderSeoTab(p) {
-  const url = location.origin + location.pathname + '#/p/' + p.slug;
+  const url = publicUrlFor(p);
+  const subUrl = subdomainUrlFor(p);
+  const st = slugStatus(p.slug, p.id);
   return `<h4>SEO &amp; public link</h4>
-  <label>URL slug</label><input value="${esc(p.slug)}" oninput="updateSlug(this.value)">
-  <p class="small muted">Letters, numbers and hyphens only.</p>
+  <label>Page address / Subdomain</label>
+  <div class="copy-row"><span class="mono" style="align-self:center">${esc(location.origin.replace(/^https?:\/\//, ''))}/</span><input id="slug-input" value="${esc(p.slug)}" oninput="updateSlugLive(this.value)"></div>
+  <p class="small" id="slug-status" class="${st.ok ? 'slug-ok' : 'slug-bad'}">${esc(st.msg)}</p>
+  <p class="small muted">Lowercase letters, numbers and hyphens only. This name is your page's address — it must be unique across your pages.</p>
+  <label>Live link (works right now)</label><div class="copy-row"><input readonly id="seo-live-link" value="${esc(url)}"><button class="btn btn-sm" data-copy="${esc(url)}" data-copy-label="Live link">Copy</button></div>
+  <label>Subdomain address</label><div class="copy-row"><input readonly id="seo-sub-link" value="${esc(subUrl)}"><button class="btn btn-sm" data-copy="${esc(subUrl)}" data-copy-label="Subdomain address">Copy</button></div>
+  <div class="note-box" style="margin-top:12px"><b>How the two links work:</b> the <b>/${esc(p.slug)}</b> link works right now on the free vercel.app domain. The <b>${esc(p.slug)}.banaopage.vercel.app</b> form works once a custom domain with wildcard DNS is connected — add your domain in the Vercel dashboard, then add a wildcard DNS record (<code>*.yourdomain.com</code> → Vercel), and the same page opens at <code>${esc(p.slug)}.yourdomain.com</code>.</div>
   <label>SEO title (browser tab + Google)</label><input value="${esc(p.seoTitle)}" oninput="updatePageMeta('seoTitle', this.value)">
   <label>SEO description</label><textarea rows="3" oninput="updatePageMeta('seoDesc', this.value)">${esc(p.seoDesc)}</textarea>
-  <label>Public link</label><div class="copy-row"><input readonly value="${esc(url)}"><button class="btn btn-sm" data-copy="${esc(url)}" data-copy-label="Public link">Copy</button></div>
   <p class="small muted" style="margin-top:10px">Status: <b>${p.status === 'live' ? 'Live — anyone with the link can see it' : 'Draft — visitors see "not published"'}</b></p>`;
 }
-function updateSlug(v) {
+function updateSlugLive(v) {
   const p = builderPage(); if (!p) return;
-  const s = slugify(v);
-  if (!s) return;
-  const clash = DB.pages.some(x => x.id !== p.id && x.slug === s);
-  if (clash) { toast('That slug is already used by another page'); return; }
-  p.slug = s; saveDB(); saveBuilder(true);
+  const st = slugStatus(v, p.id);
+  const el = $('#slug-status');
+  if (el) { el.textContent = st.msg; el.className = 'small ' + (st.ok ? 'slug-ok' : 'slug-bad'); }
+  if (!st.ok) return;
+  p.slug = slugify(v); saveDB(); saveBuilder(true);
+  const live = $('#seo-live-link'); if (live) live.value = publicUrlFor(p);
+  const sub = $('#seo-sub-link'); if (sub) sub.value = subdomainUrlFor(p);
 }
+function updateSlug(v) { updateSlugLive(v); }
 function updatePageMeta(field, v) { const p = builderPage(); if (!p) return; p[field] = v; saveDB(); saveBuilder(true); }
 
 /* ---------- Tracking tab ---------- */
@@ -835,10 +1124,11 @@ async function sendTestCapi() {
 /* ---------- Public page ---------- */
 function renderPublicPage(slug, app) {
   const p = DB.pages.find(x => x.slug === slug);
-  if (!p) { document.title = 'Page not found | BanaoPage'; app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>Page not found</h2><p class="muted">This link may be wrong, or the page was deleted.</p><a class="btn btn-primary" href="#/">Go to BanaoPage home</a></div></div>'; return; }
+  if (!p) { document.title = 'Page not found | BanaoPage'; app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>Page not found</h2><p class="muted">This link may be wrong, or the page was deleted.</p><a class="btn btn-primary" href="/">Go to BanaoPage home</a></div></div>'; return; }
   document.title = (p.seoTitle || p.title) + '';
+  document.body.classList.add('public-mode');
   if (p.status !== 'live') {
-    app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>This page is not published yet</h2><p class="muted">The owner has saved this page as a draft. Please check back later.</p><a class="btn" href="#/">Go to BanaoPage home</a></div></div>';
+    app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>This page is not published yet</h2><p class="muted">The owner has saved this page as a draft. Please check back later.</p><a class="btn" href="/">Go to BanaoPage home</a></div></div>';
     return;
   }
   // Meta Pixel (only if the owner set one)
@@ -850,8 +1140,19 @@ function renderPublicPage(slug, app) {
       document.head.appendChild(s);
     }
   }
+  if (p.mode === 'html') {
+    /* Full-page pasted HTML: render exactly as written, full viewport, sandboxed. */
+    app.innerHTML = '<iframe id="html-full-frame" class="html-full-frame" sandbox="allow-scripts" title="' + esc(p.title) + '"></iframe>';
+    const fr = document.getElementById('html-full-frame');
+    if (fr) fr.srcdoc = p.htmlCode || '';
+    logEvent(p.id, 'view');
+    if (p.tracking && p.tracking.capiToken) {
+      fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view', slug: p.slug, ts: Date.now() }) }).catch(() => {});
+    }
+    return;
+  }
   app.innerHTML = `<div class="public-page">${p.blocks.map(b => blockHTML(b, p, 'public')).join('')}</div>
-  <div class="wrap center small muted" style="padding:18px 0 30px">Made with <a href="#/">BanaoPage</a> — landing pages + Telegram tracking</div>`;
+  <div class="wrap center small muted" style="padding:18px 0 30px">Made with <a href="/">BanaoPage</a> — landing pages + Telegram tracking</div>`;
   logEvent(p.id, 'view');
   tickCountdowns();
   // Fire a CAPI-side ping for the view (best-effort, never blocks the page)
@@ -863,15 +1164,25 @@ function renderPublicPage(slug, app) {
 /* ---------- Analytics ---------- */
 function renderAnalytics(app) {
   const user = currentUser();
+  const plan = PLANS[planOf(user)];
   const pages = myPages(user);
-  const evs = DB.events.filter(e => pages.some(p => p.id === e.pageId));
+  const windowDays = plan.analyticsDays;
+  const since = windowDays === Infinity ? 0 : Date.now() - windowDays * 864e5;
+  const evs = DB.events.filter(e => pages.some(p => p.id === e.pageId) && e.ts >= since);
   const c = t => evs.filter(e => e.type === t).length;
   const uniq = t => new Set(evs.filter(e => e.type === t).map(e => e.visitor)).size;
+  const windowLabel = windowDays === Infinity ? 'All time' : 'Last ' + windowDays + ' days';
+  const utmRows = {};
+  evs.filter(e => e.type === 'view' && e.utm_source).forEach(e => {
+    const key = e.utm_source + ' / ' + (e.utm_campaign || '(no campaign)');
+    utmRows[key] = (utmRows[key] || 0) + 1;
+  });
+  const utmList = Object.entries(utmRows).sort((a, b) => b[1] - a[1]);
   app.innerHTML = `
   <div class="wrap page-pad">
-    <div class="dash-head"><div><h2 style="margin:0">Analytics</h2><p class="muted" style="margin:4px 0 0">Last 7 days · all your pages</p></div>
+    <div class="dash-head"><div><h2 style="margin:0">Analytics</h2><p class="muted" style="margin:4px 0 0">${windowLabel} · all your pages · ${esc(plan.name)} plan keeps ${windowDays === Infinity ? 'full history' : windowDays + ' days'}</p></div>
     <div class="inline-row">
-      <button class="btn" onclick="exportCSV()">⬇ Export CSV</button>
+      <button class="btn" onclick="exportCSV()">⬇ Export CSV${plan.csv ? '' : ' 🔒'}</button>
       <button class="btn btn-danger" onclick="clearDemoData()">Clear demo data</button>
     </div></div>
     <div class="stat-grid">
@@ -882,6 +1193,9 @@ function renderAnalytics(app) {
     </div>
     <div class="card" style="margin-bottom:20px"><h3 style="margin-top:0">Events — last 7 days</h3><canvas id="chart" width="900" height="260" style="width:100%;height:260px"></canvas>
     <p class="small muted">Bars: views (indigo), clicks (emerald), join requests (amber).</p></div>
+    <div class="card" style="margin-bottom:20px"><h3 style="margin-top:0">UTM source &amp; campaign report</h3>
+    ${plan.utm ? (utmList.length ? `<div style="overflow-x:auto"><table><thead><tr><th>Source / Campaign</th><th>Views</th></tr></thead><tbody>${utmList.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}</tbody></table></div><p class="small muted">From utm_source / utm_campaign on your page links — e.g. share as ${esc(location.origin)}/your-page?utm_source=telegram&amp;utm_campaign=launch</p>` : '<p class="muted">No UTM-tagged visits yet. Share links like <code>' + esc(location.origin) + '/your-page?utm_source=telegram&amp;utm_campaign=launch</code> and they will appear here.</p>') : '<p class="muted">🔒 UTM reports are on the <b>Growth</b> and <b>Business Pro</b> plans. <a href="#/settings">Upgrade →</a></p>'}
+    </div>
     <div class="card"><h3 style="margin-top:0">Per-page breakdown</h3>
     <div style="overflow-x:auto"><table>
       <thead><tr><th>Page</th><th>Views</th><th>Clicks</th><th>Join req.</th><th>Confirmed</th><th>Join rate*</th></tr></thead>
@@ -921,6 +1235,8 @@ function drawChart(evs) {
 }
 function exportCSV() {
   const user = currentUser();
+  const plan = PLANS[planOf(user)];
+  if (!plan.csv) { toast('CSV export is a paid-plan feature — upgrade to Starter (₹1,999/mo) in Settings.'); location.hash = '#/settings'; render(); return; }
   const pages = myPages(user);
   const rows = [['page', 'slug', 'date', 'type', 'visitor']];
   DB.events.filter(e => pages.some(p => p.id === e.pageId)).forEach(e => {
@@ -953,7 +1269,7 @@ function renderLeads(app) {
     <div class="card"><div style="overflow-x:auto"><table>
       <thead><tr><th>Name</th><th>Phone / Email</th><th>Page</th><th>When</th><th></th></tr></thead>
       <tbody>${leads.map(l => { const p = pages.find(x => x.id === l.pageId);
-        return `<tr><td><b>${esc(l.name)}</b></td><td>${esc(l.contact)}</td><td>${p ? esc(p.title) : '—'}</td><td>${fmtDT(l.ts)}</td>
+        return `<tr><td><b>${esc(l.name)}</b>${l.kind === 'survey' && l.question ? '<div class="small muted">Q: ' + esc(l.question) + '</div>' : ''}</td><td>${esc(l.contact)}</td><td>${p ? esc(p.title) : '—'}</td><td>${fmtDT(l.ts)}</td>
         <td><button class="btn btn-sm btn-danger" onclick="deleteLead('${l.id}')">Delete</button></td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">No leads yet — add a Form block to a page and publish it.</td></tr>'}</tbody>
     </table></div></div>
   </div>`;
@@ -978,11 +1294,12 @@ function renderSettings(app) {
     </div>
     <div class="card" style="margin-bottom:18px">
       <h3 style="margin-top:0">Plan — currently <span class="tag tag-smart">${esc(PLANS[plan].name)}</span></h3>
-      <p class="muted">Free: 3 pages, 1 Smart Tracking (72h trial). Starter ₹499/mo: 10 pages, 2 Smart. Pro ₹999/mo: unlimited pages, 10 Smart.</p>
+      <p class="muted">Free ₹0: 3 pages, 1 Smart Tracking (72h trial), analytics 7 days, 5 templates. Starter ₹1,999/mo (₹19,190/yr): 7 pages, 2 Smart, analytics 30 days + CSV, 20 templates. Growth ₹4,999/mo (₹47,990/yr): 20 pages, 8 Smart, analytics 90 days + CSV + UTM reports, 50 templates. Business Pro ₹14,999/mo (₹1,43,990/yr): unlimited pages, 50 Smart, full history + CSV + UTM, 100 templates.</p>
       <div class="inline-row">
         <button class="btn ${plan === 'free' ? 'btn-primary' : ''}" onclick="upgradePlan('free')">Free ₹0</button>
-        <button class="btn ${plan === 'starter' ? 'btn-primary' : ''}" onclick="upgradePlan('starter')">Starter ₹499/mo</button>
-        <button class="btn ${plan === 'pro' ? 'btn-primary' : ''}" onclick="upgradePlan('pro')">Pro ₹999/mo</button>
+        <button class="btn ${plan === 'starter' ? 'btn-primary' : ''}" onclick="upgradePlan('starter')">Starter ₹1,999/mo</button>
+        <button class="btn ${plan === 'growth' ? 'btn-primary' : ''}" onclick="upgradePlan('growth')">Growth ₹4,999/mo</button>
+        <button class="btn ${plan === 'pro' ? 'btn-primary' : ''}" onclick="upgradePlan('pro')">Business Pro ₹14,999/mo</button>
       </div>
       <p class="small muted">Upgrades here are simulated — they just change your limits in this browser. No payment is taken.</p>
     </div>
@@ -1014,4 +1331,6 @@ function resetAllData() {
 }
 
 /* ---------- Boot ---------- */
+/* Read-only debug handle (handy for testing / support): window.BanaoPage.db() */
+window.BanaoPage = { db: () => DB, PLANS, slugStatus, subdomainFromHostname, resolvePublicPageFromUrl, buildExportHTML };
 render();
