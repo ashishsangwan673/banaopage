@@ -6,6 +6,18 @@
 <title>BanaoPage — Landing pages + Telegram join tracking, made simple for India</title>
 <meta name="description" content="BanaoPage lets you build beautiful landing pages in minutes — no code — and track real Telegram join requests, not just clicks.">
 <link rel="stylesheet" href="styles.css">
+<script>
+/* Hide the site header/footer before first paint when the URL is a public
+   landing-page link (/slug or /p/slug) — otherwise the BanaoPage site flashes
+   before the landing page loads. The app removes the class again if the page
+   turns out not to exist. */
+(function () {
+  try {
+    var path = location.pathname.replace(/^\/+|\/+$/g, '');
+    if (path && path.indexOf('/') === -1) document.documentElement.classList.add('public-mode');
+  } catch (e) {}
+})();
+</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%234F46E5'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'>B</text></svg>">
 </head>
 <body>
@@ -50,7 +62,7 @@
   </div>
   <div class="wrap footer-bottom">
     <span>&copy; 2026 BanaoPage. Made in India, for India.</span>
-    <span class="muted small">Demo app — data stays in your browser (localStorage).</span>
+    <span class="muted small">Your pages sync to the cloud — open them from any browser.</span>
   </div>
 </footer>
 <div id="toast" class="toast" hidden></div>
