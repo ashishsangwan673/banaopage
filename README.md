@@ -53,6 +53,19 @@ Every page's slug is its address. The **working link** is `https://banaopage.ver
 - **Export HTML** (dashboard row / builder bar): downloads a standalone `.html` file — the pasted code verbatim for HTML pages, or a self-contained render for block pages.
 - **Auto-resizing frames (bug fix, 15 Nov 2026):** every HTML iframe gets a tiny `/* BanaoPage auto-resize */` script injected that reports its content height to the parent, which grows the iframe to fit — no more 200px clipping of tall pasted pages. Paste-HTML pages render as a normal scrolling page (not a fixed viewport frame). If no resize message arrives within ~1.5s, the frame falls back to a generous height (900px for full pages). If a Raw HTML block holds a whole page (`<!doctype` / `<html` detected), the inspector warns and offers "Convert to HTML page".
 
+## Embed tracking on your own page
+
+Your own landing page, hosted anywhere, can use BanaoPage tracking with ONE line of code:
+
+```html
+<script src="https://banaopage.vercel.app/tracker.js" data-page="your-page-address" data-channel="your-telegram-channel"></script>
+```
+
+- Dashboard → **↗ External page**: register your page (name, address, your page URL, Telegram channel) and copy the ready-made snippet.
+- Or any page row → **Embed code** copies the snippet for that page.
+- The snippet reports views, button clicks and Telegram join clicks to your dashboard for that page. It never throws and never blocks your page.
+- Opening `banaopage.vercel.app/<address>` redirects to your real page.
+
 ## Features
 
 - Landing homepage (hero, features, how-it-works, templates, pricing, FAQ, footer)
@@ -66,4 +79,4 @@ Every page's slug is its address. The **working link** is `https://banaopage.ver
 
 ## Honest limitation
 
-**All data lives in the visitor's browser (localStorage).** A page you publish works for anyone who opens its link *in this browser*, because the page data is read from that browser's storage. Real cross-device publishing — where a page you create on your laptop is visible to a stranger on their phone — needs a backend database (e.g. Sanity/Supabase/Firebase) and authenticated API routes. That is the one deliberate shortcut in this demo build; everything else is fully functional.
+**Cloud backend is live (15 Nov 2026):** published pages sync to Supabase, so a page opens the same in any browser. The browser still keeps a localStorage copy as an instant cache. Remaining honest limits: analytics history is capped per plan; confirmed joins need your Telegram bot connected; the free tier runs on a shared Supabase project (fair-use limits apply).
