@@ -719,7 +719,8 @@ function createBlankPage() {
    clicks and Telegram join clicks flow back to this page's dashboard. */
 function embedSnippetFor(p) {
   const channel = (p.tracking && p.tracking.channel) || '';
-  return '<script src="' + location.origin + '/tracker.js" data-page="' + p.slug + '"' + (channel ? ' data-channel="' + channel + '"' : '') + '><\/script>';
+  const pixel = (p.tracking && p.tracking.pixelId) || '';
+  return '<script src="' + location.origin + '/tracker.js" data-page="' + p.slug + '"' + (channel ? ' data-channel="' + channel + '"' : '') + (pixel ? ' data-pixel="' + pixel + '"' : '') + '><\/script>';
 }
 function copyEmbedCode(id) {
   const p = DB.pages.find(x => x.id === id); if (!p) return;
@@ -755,7 +756,12 @@ function renderExternalPage(id, app) {
       <label class="small muted">Your landing page URL</label>
       <input class="input" id="ext-url" placeholder="https://your-page.com" value="${esc(p.externalUrl || '')}" style="margin:4px 0 10px">
       <label class="small muted">Telegram channel (without @) — optional</label>
-      <input class="input" id="ext-channel" placeholder="mychannel" value="${esc(p.tracking && p.tracking.channel ? p.tracking.channel : '')}" style="margin:4px 0 12px">
+      <input class="input" id="ext-channel" placeholder="mychannel" value="${esc(p.tracking && p.tracking.channel ? p.tracking.channel : '')}" style="margin:4px 0 10px">
+      <label class="small muted">Meta Pixel ID (optional) — for Meta ads optimisation</label>
+      <input class="input" id="ext-pixel" placeholder="e.g. 123456789012345" value="${esc(p.tracking && p.tracking.pixelId ? p.tracking.pixelId : '')}" style="margin:4px 0 10px">
+      <label class="small muted">Telegram Bot Token (optional) — for confirmed joins</label>
+      <input class="input" id="ext-token" type="password" placeholder="123456:ABC-DEF…" value="${esc(p.tracking && p.tracking.botToken ? p.tracking.botToken : '')}" style="margin:4px 0 4px">
+      <p class="small muted" style="margin:0 0 12px">The bot must be an admin in your channel. Without a Pixel, views/clicks/joins still work — Meta just can't optimise ads on them. Without a bot token, join clicks are counted but confirmed joins stay at 0.</p>
       <button class="btn btn-primary" onclick="saveExternalPage('${p.id}')">Save</button>
     </div>
     <div class="card" style="margin-bottom:16px">
@@ -777,11 +783,16 @@ function saveExternalPage(id) {
   const slugRaw = ($('#ext-slug').value || '').trim();
   const url = ($('#ext-url').value || '').trim();
   const channel = ($('#ext-channel').value || '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?t\.me\//i, '').replace(/^t\.me\//i, '');
+  const pixelId = ($('#ext-pixel').value || '').trim().replace(/\D/g, '');
+  const botToken = ($('#ext-token').value || '').trim();
   if (!title) { toast('Give the page a name.'); return; }
   const st = slugStatus(slugRaw, p.id);
   if (!st.ok) { toast(st.msg); return; }
   p.title = title; p.slug = slugify(slugRaw); p.seoTitle = title + ' | BanaoPage'; p.externalUrl = url;
   p.tracking.channel = channel;
+  p.tracking.pixelId = pixelId;
+  p.tracking.botToken = botToken;
+  p.tracking.smart = !!botToken;
   saveDB(); toast('External page saved — tracking is live once the code is on your page'); render();
 }
 function duplicatePage(id) {
