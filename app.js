@@ -95,10 +95,11 @@ const Cloud = {
     });
   },
   getPage(slug) {
-    return this.probe().then(enabled => {
-      if (!enabled || typeof fetch !== 'function') return null;
-      return fetch('/api/cloud?op=page&slug=' + encodeURIComponent(slug)).then(r => (r.ok ? r.json() : null)).then(j => (j && j.ok ? j.page : null)).catch(() => null);
-    });
+    /* No probe first: the page endpoint itself answers cloud_not_configured
+       when the backend is off, so one fetch is enough. The probe round-trip
+       used to delay every first open of a public page. */
+    if (typeof fetch !== 'function') return Promise.resolve(null);
+    return fetch('/api/cloud?op=page&slug=' + encodeURIComponent(slug)).then(r => (r.ok ? r.json() : null)).then(j => (j && j.ok ? j.page : null)).catch(() => null);
   },
   /* Push my pages up (debounced — saveDB fires on every keystroke). */
   syncSoon() {
@@ -351,18 +352,16 @@ function resolvePublicPageFromUrl() {
    not in this browser. Fetch it, cache it locally, render it — or fall back
    to the homepage when it truly doesn't exist. Never throws. */
 function renderCloudPageOrHome(slug, app) {
-  app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>Loading page…</h2><p class="muted">Finding your page.</p></div></div>';
-  Cloud.probe().then(enabled => {
+  /* Minimal neutral loader — no BanaoPage header/card, so opening a landing
+     page link never flashes the BanaoPage site first. */
+  app.innerHTML = '<div class="public-loading"><div class="public-spinner"></div></div>';
+  Cloud.getPage(slug).then(p => {
     if (publicSlugFromUrl() !== slug) return; /* user navigated away meanwhile */
-    if (!enabled) { renderHome(app); return; }
-    return Cloud.getPage(slug).then(p => {
-      if (publicSlugFromUrl() !== slug) return;
-      if (!p) { renderHome(app); return; }
-      const i = DB.pages.findIndex(x => x.id === p.id);
-      if (i >= 0) DB.pages[i] = p; else DB.pages.push(p);
-      saveDB();
-      renderPublicPage(p.slug, app);
-    });
+    if (!p) { document.documentElement.classList.remove('public-mode'); document.body.classList.remove('public-mode'); renderHeader(currentUser()); renderHome(app); return; }
+    const i = DB.pages.findIndex(x => x.id === p.id);
+    if (i >= 0) DB.pages[i] = p; else DB.pages.push(p);
+    saveDB();
+    renderPublicPage(p.slug, app);
   });
 }
 function publicUrlFor(page) { return location.origin + '/' + page.slug; }
@@ -393,19 +392,24 @@ function render() {
   const { parts } = route();
   const app = $('#app');
   const user = currentUser();
-  renderHeader(user);
-  document.body.classList.remove('public-mode');
-  window.scrollTo(0, 0);
+  /* Public landing-page links render FIRST, before the site header — so the
+     BanaoPage site never flashes before the landing page. */
   const urlPage = resolvePublicPageFromUrl();
-  if (urlPage) { renderPublicPage(urlPage.slug, app); return; }
+  if (urlPage) { document.documentElement.classList.add('public-mode'); document.body.classList.add('public-mode'); window.scrollTo(0, 0); renderPublicPage(urlPage.slug, app); return; }
   if (parts[0] === 'p' && parts[1]) {
     const local = DB.pages.find(x => x.slug === parts[1]);
+    document.documentElement.classList.add('public-mode'); document.body.classList.add('public-mode'); window.scrollTo(0, 0);
     if (local) { renderPublicPage(parts[1], app); return; }
     renderCloudPageOrHome(parts[1], app); return;
   }
   const pubSlug = publicSlugFromUrl();
-  if (pubSlug) { renderCloudPageOrHome(pubSlug, app); return; }
+  if (pubSlug) { document.documentElement.classList.add('public-mode'); document.body.classList.add('public-mode'); window.scrollTo(0, 0); renderCloudPageOrHome(pubSlug, app); return; }
+  renderHeader(user);
+  document.documentElement.classList.remove('public-mode');
+  document.body.classList.remove('public-mode');
+  window.scrollTo(0, 0);
   if (parts[0] === 'builder' && parts[1]) { renderBuilder(parts[1], app); return; }
+  if (parts[0] === 'external' && parts[1]) { renderExternalPage(parts[1], app); return; }
   switch (parts[0] || '') {
     case '': renderHome(app); break;
     case 'pricing': renderHome(app, 'pricing'); break;
@@ -603,6 +607,7 @@ function renderDashboard(app) {
       <div class="inline-row">
         <a class="btn" href="#/templates">+ New from template</a>
         <button class="btn" onclick="createHtmlPage()">&lt;/&gt; Paste HTML</button>
+        <button class="btn" onclick="createExternalPage()">↗ External page</button>
         <button class="btn btn-primary" onclick="createBlankPage()">+ Blank page</button>
       </div>
     </div>
@@ -641,18 +646,22 @@ function renderDashboardList() {
     const s = pageStats(p.id);
     const url = publicUrlFor(p);
     const subUrl = subdomainUrlFor(p);
+    const isExt = p.mode === 'external';
+    const viewUrl = (isExt && p.externalUrl) ? p.externalUrl : url;
+    const editHref = isExt ? '#/external/' + p.id : '#/builder/' + p.id;
     return `<div class="page-row">
-      <div><div class="title">${esc(p.title)} ${p.mode === 'html' ? '<span class="tag tag-smart">&lt;/&gt; HTML</span>' : ''}</div>
-      <div class="small muted">/${esc(p.slug)} · ${p.mode === 'html' ? 'paste-HTML page' : (p.template ? esc(p.template) : 'blank')} · created ${fmtDate(p.createdAt)}</div>
+      <div><div class="title">${esc(p.title)} ${p.mode === 'html' ? '<span class="tag tag-smart">&lt;/&gt; HTML</span>' : ''}${isExt ? '<span class="tag tag-smart">↗ External</span>' : ''}</div>
+      <div class="small muted">/${esc(p.slug)} · ${isExt ? (p.externalUrl ? '→ ' + esc(p.externalUrl) : 'your page URL not set yet') : (p.mode === 'html' ? 'paste-HTML page' : (p.template ? esc(p.template) : 'blank'))} · created ${fmtDate(p.createdAt)}</div>
       <div class="small" style="margin-top:4px"><span class="tag ${p.status === 'live' ? 'tag-live' : 'tag-draft'}">${p.status === 'live' ? '● Live' : '○ Draft'}</span>
       ${p.tracking && p.tracking.smart ? '<span class="tag tag-smart">✈️ Smart Tracking</span>' : ''}
       <span class="muted"> ${s.views} views · ${s.clicks} clicks · ${s.joins} joins</span></div>
-      <div class="small" style="margin-top:4px">🔗 <a href="${esc(url)}" target="_blank">${esc(url.replace(/^https?:\/\//, ''))}</a> · <span class="muted">subdomain: ${esc(subUrl.replace(/^https?:\/\//, ''))}</span></div></div>
+      <div class="small" style="margin-top:4px">🔗 <a href="${esc(url)}" target="_blank">${esc(url.replace(/^https?:\/\//, ''))}</a>${isExt && p.externalUrl ? ` · <span class="muted">your page: <a href="${esc(p.externalUrl)}" target="_blank">${esc(p.externalUrl.replace(/^https?:\/\//, ''))}</a></span>` : ` · <span class="muted">subdomain: ${esc(subUrl.replace(/^https?:\/\//, ''))}</span>`}</div></div>
       <div class="inline-row">
-        <a class="btn btn-sm" href="${esc(url)}" target="_blank">View</a>
+        <a class="btn btn-sm" href="${esc(viewUrl)}" target="_blank">View</a>
         <button class="btn btn-sm" data-copy="${esc(url)}" data-copy-label="Live link">Copy link</button>
-        <button class="btn btn-sm" onclick="exportPageHTML('${p.id}')">Export HTML</button>
-        <a class="btn btn-sm btn-primary" href="#/builder/${p.id}">Edit</a>
+        <button class="btn btn-sm" onclick="copyEmbedCode('${p.id}')">Embed code</button>
+        ${isExt ? '' : `<button class="btn btn-sm" onclick="exportPageHTML('${p.id}')">Export HTML</button>`}
+        <a class="btn btn-sm btn-primary" href="${editHref}">Edit</a>
         <button class="btn btn-sm" onclick="duplicatePage('${p.id}')">Duplicate</button>
         <button class="btn btn-sm btn-danger" onclick="deletePage('${p.id}')">Delete</button>
       </div>
@@ -704,6 +713,76 @@ function createBlankPage() {
   if (myPages(user).length >= plan.pages) { toast('Page limit reached on the ' + plan.name + ' plan. Upgrade in Settings.'); return; }
   const p = { id: uid(), owner: user.id, template: 'blank', title: 'Untitled Page', slug: slugify('untitled-' + Math.random().toString(36).slice(2, 5)), seoTitle: 'Untitled Page | BanaoPage', seoDesc: '', status: 'draft', mode: 'blocks', htmlCode: '', history: [], blocks: [newBlock('hero'), newBlock('text'), newBlock('button')], tracking: { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null }, createdAt: Date.now() };
   DB.pages.push(p); saveDB(); toast('Blank page created'); location.hash = '#/builder/' + p.id; render();
+}
+/* ---------- Embed tracking for your OWN landing page ---------- */
+/* One line of code pasted into any page you host anywhere — views, button
+   clicks and Telegram join clicks flow back to this page's dashboard. */
+function embedSnippetFor(p) {
+  const channel = (p.tracking && p.tracking.channel) || '';
+  return '<script src="' + location.origin + '/tracker.js" data-page="' + p.slug + '"' + (channel ? ' data-channel="' + channel + '"' : '') + '><\/script>';
+}
+function copyEmbedCode(id) {
+  const p = DB.pages.find(x => x.id === id); if (!p) return;
+  copyText(embedSnippetFor(p), 'Embed code');
+}
+function createExternalPage() {
+  const user = currentUser(); if (!user) return;
+  const plan = PLANS[planOf(user)];
+  if (myPages(user).length >= plan.pages) { toast('Page limit reached on the ' + plan.name + ' plan. Upgrade in Settings.'); return; }
+  const p = { id: uid(), owner: user.id, template: 'external', title: 'My External Page', slug: slugify('external-' + Math.random().toString(36).slice(2, 5)), seoTitle: 'My External Page | BanaoPage', seoDesc: '', status: 'live', mode: 'external', externalUrl: '', htmlCode: '', history: [], blocks: [], tracking: { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null }, createdAt: Date.now() };
+  DB.pages.push(p); saveDB(); toast('External page added — paste the code on your own page'); location.hash = '#/external/' + p.id; render();
+}
+function renderExternalPage(id, app) {
+  const user = currentUser();
+  if (!user) { location.hash = '#/login'; render(); return; }
+  const p = DB.pages.find(x => x.id === id && x.owner === user.id);
+  if (!p || p.mode !== 'external') { location.hash = '#/dashboard'; render(); return; }
+  const s = pageStats(p.id);
+  const snippet = embedSnippetFor(p);
+  app.innerHTML = `
+  <div class="wrap page-pad">
+    <div class="dash-head">
+      <div><h2 style="margin:0">External page</h2><p class="muted" style="margin:4px 0 0">Your own landing page, tracked by BanaoPage</p></div>
+      <div class="inline-row"><a class="btn" href="#/dashboard">← Dashboard</a></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">1 · Tell us about your page</h3>
+      <label class="small muted">Page name</label>
+      <input class="input" id="ext-title" value="${esc(p.title)}" style="margin:4px 0 10px">
+      <label class="small muted">Page address (this is the tracking ID)</label>
+      <input class="input" id="ext-slug" value="${esc(p.slug)}" style="margin:4px 0 4px">
+      <p class="small muted" style="margin:0 0 10px">Live at ${esc(location.origin)}/${esc(p.slug)} — that link redirects to your page below.</p>
+      <label class="small muted">Your landing page URL</label>
+      <input class="input" id="ext-url" placeholder="https://your-page.com" value="${esc(p.externalUrl || '')}" style="margin:4px 0 10px">
+      <label class="small muted">Telegram channel (without @) — optional</label>
+      <input class="input" id="ext-channel" placeholder="mychannel" value="${esc(p.tracking && p.tracking.channel ? p.tracking.channel : '')}" style="margin:4px 0 12px">
+      <button class="btn btn-primary" onclick="saveExternalPage('${p.id}')">Save</button>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">2 · Paste this ONE line into your page</h3>
+      <p class="muted small" style="margin-top:0">Put it anywhere in your page's HTML (near the end of the &lt;body&gt; is best). That is all — tracking starts on its own. Telegram join clicks are counted automatically; confirmed joins need your bot connected, same as Smart Tracking.</p>
+      <textarea class="input" rows="3" readonly onclick="this.select()" style="font-family:monospace;font-size:13px">${esc(snippet)}</textarea>
+      <div style="margin-top:10px"><button class="btn btn-primary" onclick="copyEmbedCode('${p.id}')">Copy embed code</button></div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">3 · Stats so far</h3>
+      <p style="margin:0">${s.views} views · ${s.clicks} clicks · ${s.joins} join requests (${s.confirmed} confirmed)</p>
+      <p class="small muted" style="margin:8px 0 0">Numbers update when the dashboard pulls fresh data from the cloud.</p>
+    </div>
+  </div>`;
+}
+function saveExternalPage(id) {
+  const user = currentUser(); const p = DB.pages.find(x => x.id === id && x.owner === user.id); if (!p) return;
+  const title = ($('#ext-title').value || '').trim();
+  const slugRaw = ($('#ext-slug').value || '').trim();
+  const url = ($('#ext-url').value || '').trim();
+  const channel = ($('#ext-channel').value || '').trim().replace(/^@/, '');
+  if (!title) { toast('Give the page a name.'); return; }
+  const st = slugStatus(slugRaw, p.id);
+  if (!st.ok) { toast(st.msg); return; }
+  p.title = title; p.slug = slugify(slugRaw); p.seoTitle = title + ' | BanaoPage'; p.externalUrl = url;
+  p.tracking.channel = channel;
+  saveDB(); toast('External page saved — tracking is live once the code is on your page'); render();
 }
 function duplicatePage(id) {
   const user = currentUser(); const src = DB.pages.find(p => p.id === id && p.owner === user.id); if (!src) return;
@@ -1356,6 +1435,13 @@ async function sendTestCapi() {
 function renderPublicPage(slug, app) {
   const p = DB.pages.find(x => x.slug === slug);
   if (!p) { document.title = 'Page not found | BanaoPage'; app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>Page not found</h2><p class="muted">This link may be wrong, or the page was deleted.</p><a class="btn btn-primary" href="/">Go to BanaoPage home</a></div></div>'; return; }
+  /* External pages live on the owner's own site — /slug just redirects there. */
+  if (p.mode === 'external') {
+    if (p.externalUrl) { location.replace(p.externalUrl); return; }
+    document.title = 'Page not set up yet | BanaoPage';
+    app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>This page is not set up yet</h2><p class="muted">The owner has not linked their own landing page here yet.</p><a class="btn" href="/">Go to BanaoPage home</a></div></div>';
+    return;
+  }
   document.title = (p.seoTitle || p.title) + '';
   document.body.classList.add('public-mode');
   if (p.status !== 'live') {
