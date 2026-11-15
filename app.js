@@ -1,4 +1,7 @@
-/* BanaoPage — single-file SPA logic. All data in localStorage (key banaopage_db_v1). */
+/* BanaoPage — single-file SPA logic. Data lives in localStorage first
+   (key banaopage_db_v1, instant + offline) and, when the cloud backend is
+   configured, also in Supabase via /api/cloud — so a published page opens
+   the same for everyone, in any browser. */
 'use strict';
 const DB_KEY = 'banaopage_db_v1';
 const $ = (s, el) => (el || document).querySelector(s);
@@ -24,7 +27,7 @@ function defaultDB() { return { users: [], session: null, pages: [], events: [],
 function loadDB() { try { const raw = localStorage.getItem(DB_KEY); if (raw) return JSON.parse(raw); } catch (e) { console.warn('DB parse failed, resetting', e); } return defaultDB(); }
 let DB = loadDB();
 migrateDB();
-function saveDB() { try { localStorage.setItem(DB_KEY, JSON.stringify(DB)); } catch (e) { toast('Could not save — browser storage full or blocked'); } }
+function saveDB() { try { localStorage.setItem(DB_KEY, JSON.stringify(DB)); } catch (e) { toast('Could not save — browser storage full or blocked'); } if (typeof Cloud !== 'undefined') Cloud.syncSoon(); }
 function currentUser() { return DB.users.find(u => u.id === DB.session) || null; }
 function planOf(user) { return user ? (user.plan || 'free') : 'free'; }
 /* Real Pagebanao tiers (pagebanao.com/pricing, checked 15 Nov 2026). Yearly = ~20% off monthly x12. */
@@ -54,6 +57,7 @@ function migrateDB() {
     if (!Array.isArray(p.history)) p.history = [];
     if (!p.tracking) p.tracking = { smart: false, botToken: '', channel: '', pixelId: '', capiToken: '', eventName: 'Lead', countRepeats: false, trialStart: null };
     if (!Array.isArray(p.blocks)) p.blocks = [];
+    if (!p.updatedAt) p.updatedAt = p.createdAt || Date.now();
   });
 }
 function smartPages(user) { return DB.pages.filter(p => p.owner === user.id && p.tracking && p.tracking.smart); }
@@ -66,8 +70,79 @@ function logEvent(pageId, type, extra) {
       ev.utm_source = q.get('utm_source') || ''; ev.utm_medium = q.get('utm_medium') || ''; ev.utm_campaign = q.get('utm_campaign') || '';
     } catch (e) { /* URLSearchParams unavailable — skip UTM */ }
   }
-  DB.events.push(ev); saveDB(); return ev;
+  DB.events.push(ev); saveDB(); Cloud.sendEvent(ev); return ev;
 }
+
+/* ---------- Cloud backend (Supabase via /api/cloud) ---------- */
+/* Pages live in localStorage first (instant + offline) and, when the cloud is
+   configured (Vercel env vars set), also in Supabase — so a published page
+   opens the same for everyone, in any browser. Cloud calls never throw and
+   never block local behaviour: every failure just means "stay local". */
+const Cloud = {
+  enabled: null, _probe: null, _syncTimer: null, _slugWarned: null,
+  probe() {
+    if (this.enabled !== null) return Promise.resolve(this.enabled);
+    if (typeof fetch !== 'function') { this.enabled = false; return Promise.resolve(false); }
+    if (!this._probe) {
+      this._probe = fetch('/api/cloud?op=status').then(r => r.json()).then(j => { this.enabled = !!j.cloud; return this.enabled; }).catch(() => { this.enabled = false; return false; });
+    }
+    return this._probe;
+  },
+  post(body) {
+    return this.probe().then(enabled => {
+      if (!enabled || typeof fetch !== 'function') return null;
+      return fetch('/api/cloud', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()).catch(() => null);
+    });
+  },
+  getPage(slug) {
+    return this.probe().then(enabled => {
+      if (!enabled || typeof fetch !== 'function') return null;
+      return fetch('/api/cloud?op=page&slug=' + encodeURIComponent(slug)).then(r => (r.ok ? r.json() : null)).then(j => (j && j.ok ? j.page : null)).catch(() => null);
+    });
+  },
+  /* Push my pages up (debounced — saveDB fires on every keystroke). */
+  syncSoon() {
+    if (!currentUser()) return;
+    clearTimeout(this._syncTimer);
+    this._syncTimer = setTimeout(() => {
+      const u = currentUser(); if (!u) return;
+      this.post({ op: 'sync', owner: u.id, pages: DB.pages.filter(p => p.owner === u.id) }).then(j => {
+        if (j && j.error === 'slug_taken' && this._slugWarned !== j.slug) {
+          this._slugWarned = j.slug;
+          toast('Page address "' + j.slug + '" is already used by another account — rename it in SEO & Link.');
+        }
+      });
+    }, 900);
+  },
+  /* Pull my pages + their events/leads down; newest copy wins per page. */
+  pull() {
+    const user = currentUser();
+    if (!user || typeof fetch !== 'function') return Promise.resolve();
+    return this.probe().then(enabled => {
+      if (!enabled) return;
+      return fetch('/api/cloud?op=mine&owner=' + encodeURIComponent(user.id)).then(r => (r.ok ? r.json() : null)).then(j => {
+        if (!j || !j.ok) return;
+        const byId = {};
+        DB.pages.forEach(p => { byId[p.id] = p; });
+        (j.pages || []).forEach(cp => {
+          const lp = byId[cp.id];
+          if (!lp) { DB.pages.push(cp); return; }
+          if ((cp.updatedAt || 0) > (lp.updatedAt || 0)) Object.assign(lp, cp);
+        });
+        const eIds = new Set(DB.events.map(e => e.id));
+        (j.events || []).forEach(e => { if (!eIds.has(e.id)) DB.events.push(e); });
+        const lIds = new Set(DB.leads.map(l => l.id));
+        (j.leads || []).forEach(l => { if (!lIds.has(l.id)) DB.leads.push(l); });
+        saveDB();
+        const h = (location.hash || '').replace(/^#/, '');
+        if (/^(dashboard|templates|analytics|leads|builder)/.test(h)) render();
+      }).catch(() => {});
+    });
+  },
+  sendEvent(ev) { this.post({ op: 'event', event: ev }); },
+  sendLead(lead) { this.post({ op: 'lead', lead }); },
+  deletePage(id) { const u = currentUser(); if (u) this.post({ op: 'delete', owner: u.id, id }); }
+};
 
 /* ---------- Auto-resizing HTML iframes ---------- */
 /* BUG FIX (15 Nov 2026): Raw HTML iframes used a fixed 200px height, so any tall
@@ -231,12 +306,12 @@ function signup(name, email, pw) {
   email = email.trim().toLowerCase();
   if (DB.users.some(u => u.email === email)) return { ok: false, msg: 'An account with this email already exists. Try logging in.' };
   const u = { id: uid(), name: name.trim(), email, pw: hashPw(pw), plan: 'free', createdAt: Date.now() };
-  DB.users.push(u); DB.session = u.id; saveDB(); return { ok: true, user: u };
+  DB.users.push(u); DB.session = u.id; saveDB(); Cloud.pull(); return { ok: true, user: u };
 }
 function login(email, pw) {
   const u = DB.users.find(x => x.email === email.trim().toLowerCase());
   if (!u || u.pw !== hashPw(pw)) return { ok: false, msg: 'Wrong email or password. (Demo: demo@banaopage.in / demo1234)' };
-  DB.session = u.id; saveDB(); return { ok: true, user: u };
+  DB.session = u.id; saveDB(); Cloud.pull(); return { ok: true, user: u };
 }
 function logout() { DB.session = null; saveDB(); location.hash = '#/'; render(); }
 function loginDemo() { const r = login('demo@banaopage.in', 'demo1234'); if (r.ok) { toast('Welcome back, Demo User!'); location.hash = '#/dashboard'; render(); } else toast(r.msg); }
@@ -257,23 +332,38 @@ function subdomainFromHostname(host) {
   if (parts.length === 3 && parts[0] !== 'www' && !h.endsWith('.vercel.app')) return parts[0];
   return null;
 }
-/* Returns the public page implied by the current URL (path or hostname), or null.
-   Only applies when no hash route is active — otherwise a hash navigation from a
-   /<slug> page would be trapped on the public page, since the pathname stays. */
-function resolvePublicPageFromUrl() {
+/* The public slug implied by the current URL (path or hostname), or null.
+   Only applies when no hash route is active — otherwise a hash navigation from
+   a /<slug> page would be trapped on the public page, since the pathname stays. */
+function publicSlugFromUrl() {
   const h = (location.hash || '').replace(/^#/, '');
   if (h && h !== '/') return null;
   const path = location.pathname.replace(/^\/+|\/+$/g, '');
-  if (path && !path.includes('/')) {
-    const byPath = DB.pages.find(x => x.slug === path);
-    if (byPath) return byPath;
-  }
-  const sub = subdomainFromHostname(location.hostname);
-  if (sub) {
-    const byHost = DB.pages.find(x => x.slug === sub);
-    if (byHost) return byHost;
-  }
-  return null;
+  if (path && !path.includes('/')) return path;
+  return subdomainFromHostname(location.hostname) || null;
+}
+/* Returns the public page implied by the current URL (path or hostname), or null. */
+function resolvePublicPageFromUrl() {
+  const slug = publicSlugFromUrl();
+  return slug ? (DB.pages.find(x => x.slug === slug) || null) : null;
+}
+/* Local miss for a public slug: maybe the page lives in the shared cloud but
+   not in this browser. Fetch it, cache it locally, render it — or fall back
+   to the homepage when it truly doesn't exist. Never throws. */
+function renderCloudPageOrHome(slug, app) {
+  app.innerHTML = '<div class="wrap page-pad"><div class="card center"><h2>Loading page…</h2><p class="muted">Finding your page.</p></div></div>';
+  Cloud.probe().then(enabled => {
+    if (publicSlugFromUrl() !== slug) return; /* user navigated away meanwhile */
+    if (!enabled) { renderHome(app); return; }
+    return Cloud.getPage(slug).then(p => {
+      if (publicSlugFromUrl() !== slug) return;
+      if (!p) { renderHome(app); return; }
+      const i = DB.pages.findIndex(x => x.id === p.id);
+      if (i >= 0) DB.pages[i] = p; else DB.pages.push(p);
+      saveDB();
+      renderPublicPage(p.slug, app);
+    });
+  });
 }
 function publicUrlFor(page) { return location.origin + '/' + page.slug; }
 function subdomainUrlFor(page) { return 'https://' + page.slug + '.banaopage.vercel.app'; }
@@ -308,7 +398,13 @@ function render() {
   window.scrollTo(0, 0);
   const urlPage = resolvePublicPageFromUrl();
   if (urlPage) { renderPublicPage(urlPage.slug, app); return; }
-  if (parts[0] === 'p' && parts[1]) { renderPublicPage(parts[1], app); return; }
+  if (parts[0] === 'p' && parts[1]) {
+    const local = DB.pages.find(x => x.slug === parts[1]);
+    if (local) { renderPublicPage(parts[1], app); return; }
+    renderCloudPageOrHome(parts[1], app); return;
+  }
+  const pubSlug = publicSlugFromUrl();
+  if (pubSlug) { renderCloudPageOrHome(pubSlug, app); return; }
   if (parts[0] === 'builder' && parts[1]) { renderBuilder(parts[1], app); return; }
   switch (parts[0] || '') {
     case '': renderHome(app); break;
@@ -623,7 +719,7 @@ function deletePage(id) {
     DB.pages = DB.pages.filter(x => x.id !== id);
     DB.events = DB.events.filter(e => e.pageId !== id);
     DB.leads = DB.leads.filter(l => l.pageId !== id);
-    saveDB(); toast('Page deleted'); render();
+    saveDB(); Cloud.deletePage(id); toast('Page deleted'); render();
   });
 }
 
@@ -736,7 +832,8 @@ document.addEventListener('click', e => {
   const sv = e.target.closest('[data-survey-opt]');
   if (sv) {
     const pageId = sv.getAttribute('data-page');
-    DB.leads.push({ id: uid(), pageId, kind: 'survey', name: '📊 Survey answer', contact: sv.getAttribute('data-answer') || '', question: sv.getAttribute('data-question') || '', ts: Date.now() });
+    const ld = { id: uid(), pageId, kind: 'survey', name: '📊 Survey answer', contact: sv.getAttribute('data-answer') || '', question: sv.getAttribute('data-question') || '', ts: Date.now() };
+    DB.leads.push(ld); Cloud.sendLead(ld);
     logEvent(pageId, 'click', { label: 'survey_answer', answer: sv.getAttribute('data-answer') || '' });
     saveDB();
     toast('Thanks! Your answer was recorded.');
@@ -773,7 +870,8 @@ document.addEventListener('submit', e => {
   const name = f.querySelector('[name=name]').value.trim();
   const contact = f.querySelector('[name=contact]').value.trim();
   if (!name || !contact) return;
-  DB.leads.push({ id: uid(), pageId, name, contact, ts: Date.now() });
+  const ld = { id: uid(), pageId, name, contact, ts: Date.now() };
+  DB.leads.push(ld); Cloud.sendLead(ld);
   logEvent(pageId, 'click', { label: 'lead_form_submit' });
   saveDB();
   const blk = (DB.pages.find(p => p.id === pageId) || {}).blocks || [];
@@ -848,6 +946,7 @@ function undoBuilder() {
 }
 function saveBuilder(silent) {
   const p = builderPage(); if (!p) return;
+  p.updatedAt = Date.now();
   if (!silent) pushHistory(p);
   saveDB();
   const el = $('#autosave'); if (el) el.textContent = 'Saved ✓ ' + new Date().toLocaleTimeString('en-IN');
@@ -1470,5 +1569,6 @@ function resetAllData() {
 
 /* ---------- Boot ---------- */
 /* Read-only debug handle (handy for testing / support): window.BanaoPage.db() */
-window.BanaoPage = { db: () => DB, PLANS, slugStatus, subdomainFromHostname, resolvePublicPageFromUrl, buildExportHTML, injectResizeScript, setFrameSrcdoc, wireAutoFrames };
+window.BanaoPage = { db: () => DB, PLANS, slugStatus, subdomainFromHostname, resolvePublicPageFromUrl, publicSlugFromUrl, Cloud, buildExportHTML, injectResizeScript, setFrameSrcdoc, wireAutoFrames };
+if (currentUser()) Cloud.pull();
 render();
