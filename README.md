@@ -65,6 +65,7 @@ Your own landing page, hosted anywhere, can use BanaoPage tracking with ONE line
 - Or any page row → **Embed code** copies the snippet for that page.
 - The snippet reports views, button clicks and Telegram join clicks to your dashboard for that page. It never throws and never blocks your page.
 - Optional: add your Meta Pixel ID (fires PageView + Lead on your page) and your Telegram Bot Token (for confirmed joins). For a private (invite-link) channel, also add its Channel ID — forward any channel message to @getmyid_bot to get it.
+- When Telegram confirms a join request, the webhook records a Subscribe event (visible in Analytics + per-page stats) and sends Subscribe to Meta's Conversions API using that page's Pixel ID + CAPI token — server-side, so ad blockers can't stop it. Add the CAPI token in the same setup screen (Events Manager → Settings → Conversions API → Generate access token).
 - Opening `banaopage.vercel.app/<address>` redirects to your real page.
 
 ## Features
