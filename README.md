@@ -48,9 +48,10 @@ Every page's slug is its address. The **working link** is `https://banaopage.ver
 
 ## Raw HTML
 
-- **"Paste HTML" page** (Dashboard → Paste HTML, or Templates): paste a complete HTML document; it renders full-screen in a sandboxed iframe when published, exactly as written.
+- **"Paste HTML" page** (Dashboard → Paste HTML, or Templates): paste a complete HTML document; it renders in a sandboxed iframe when published, exactly as written.
 - **Raw HTML block**: drop into any block-built page; renders in a sandboxed iframe in the builder preview and on the live page.
 - **Export HTML** (dashboard row / builder bar): downloads a standalone `.html` file — the pasted code verbatim for HTML pages, or a self-contained render for block pages.
+- **Auto-resizing frames (bug fix, 15 Nov 2026):** every HTML iframe gets a tiny `/* BanaoPage auto-resize */` script injected that reports its content height to the parent, which grows the iframe to fit — no more 200px clipping of tall pasted pages. Paste-HTML pages render as a normal scrolling page (not a fixed viewport frame). If no resize message arrives within ~1.5s, the frame falls back to a generous height (900px for full pages). If a Raw HTML block holds a whole page (`<!doctype` / `<html` detected), the inspector warns and offers "Convert to HTML page".
 
 ## Features
 
