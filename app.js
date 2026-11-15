@@ -591,13 +591,13 @@ function myPages(user) { return DB.pages.filter(p => p.owner === user.id); }
 function pageStats(pageId) {
   const evs = DB.events.filter(e => e.pageId === pageId);
   const c = t => evs.filter(e => e.type === t).length;
-  return { views: c('view'), clicks: c('click'), joins: c('join_request'), confirmed: c('join') };
+  return { views: c('view'), clicks: c('click'), joins: c('join_request'), confirmed: c('join'), subscribe: c('subscribe') };
 }
 function renderDashboard(app) {
   const user = currentUser();
   const pages = myPages(user).slice().sort((a, b) => b.createdAt - a.createdAt);
   const plan = PLANS[planOf(user)];
-  const totals = pages.reduce((acc, p) => { const s = pageStats(p.id); acc.views += s.views; acc.clicks += s.clicks; acc.joins += s.joins; acc.confirmed += s.confirmed; return acc; }, { views: 0, clicks: 0, joins: 0, confirmed: 0 });
+  const totals = pages.reduce((acc, p) => { const s = pageStats(p.id); acc.views += s.views; acc.clicks += s.clicks; acc.joins += s.joins; acc.confirmed += s.confirmed; acc.subscribe += s.subscribe; return acc; }, { views: 0, clicks: 0, joins: 0, confirmed: 0, subscribe: 0 });
   const limitLabel = plan.pages === Infinity ? 'Unlimited' : plan.pages;
   const pct = plan.pages === Infinity ? 8 : Math.min(100, Math.round(pages.length / plan.pages * 100));
   app.innerHTML = `
@@ -616,6 +616,7 @@ function renderDashboard(app) {
       <div class="stat"><b>${totals.views}</b><span>Views</span></div>
       <div class="stat"><b>${totals.clicks}</b><span>Button clicks</span></div>
       <div class="stat"><b>${totals.joins}</b><span>Join requests (${totals.confirmed} confirmed)</span></div>
+      <div class="stat"><b>${totals.subscribe}</b><span>Subscribe</span></div>
     </div>
     <div class="usage">
       <div class="inline-row" style="justify-content:space-between"><span class="small"><b>Plan usage:</b> ${pages.length} / ${limitLabel} pages · ${smartPages(user).length} / ${plan.smart} Smart Tracking pages</span>
@@ -762,6 +763,11 @@ function renderExternalPage(id, app) {
       <p class="small muted" style="margin:0 0 10px">Private channel? Kisi bhi channel message ko @getmyid_bot ko forward karo — jo ID mile (jaise -1001234567890) wo yahan daalo. Public channel ke liye sirf naam kaafi hai.</p>
       <label class="small muted">Meta Pixel ID (optional) — for Meta ads optimisation</label>
       <input class="input" id="ext-pixel" placeholder="e.g. 123456789012345" value="${esc(p.tracking && p.tracking.pixelId ? p.tracking.pixelId : '')}" style="margin:4px 0 10px">
+      <label class="small muted">Meta Conversions API token (optional) — sends Subscribe to Meta on every real join</label>
+      <input class="input" id="ext-capi" type="password" placeholder="EAAG…" value="${esc(p.tracking && p.tracking.capiToken ? p.tracking.capiToken : '')}" style="margin:4px 0 4px">
+      <p class="small muted" style="margin:0 0 10px">Get it in Meta Events Manager → Settings → Conversions API → Generate access token.</p>
+      <label class="small muted">Bot webhook URL — set this as your bot's webhook (BotFather / setWebhook)</label>
+      <input class="input" id="ext-webhook" readonly value="${esc(location.origin + '/api/telegram-webhook')}" style="margin:4px 0 10px" onclick="this.select()">
       <label class="small muted">Telegram Bot Token (optional) — for confirmed joins</label>
       <input class="input" id="ext-token" type="password" placeholder="123456:ABC-DEF…" value="${esc(p.tracking && p.tracking.botToken ? p.tracking.botToken : '')}" style="margin:4px 0 4px">
       <p class="small muted" style="margin:0 0 12px">The bot must be an admin in your channel. Without a Pixel, views/clicks/joins still work — Meta just can't optimise ads on them. Without a bot token, join clicks are counted but confirmed joins stay at 0.</p>
@@ -775,7 +781,7 @@ function renderExternalPage(id, app) {
     </div>
     <div class="card">
       <h3 style="margin-top:0">3 · Stats so far</h3>
-      <p style="margin:0">${s.views} views · ${s.clicks} clicks · ${s.joins} join requests (${s.confirmed} confirmed)</p>
+      <p style="margin:0">${s.views} views · ${s.clicks} clicks · ${s.joins} join requests (${s.confirmed} confirmed) · ${s.subscribe} Subscribe</p>
       <p class="small muted" style="margin:8px 0 0">Numbers update when the dashboard pulls fresh data from the cloud.</p>
     </div>
   </div>`;
@@ -788,6 +794,7 @@ function saveExternalPage(id) {
   const channel = ($('#ext-channel').value || '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?t\.me\//i, '').replace(/^t\.me\//i, '');
   const channelId = ($('#ext-channelid').value || '').trim();
   const pixelId = ($('#ext-pixel').value || '').trim().replace(/\D/g, '');
+  const capiToken = ($('#ext-capi').value || '').trim();
   const botToken = ($('#ext-token').value || '').trim();
   if (!title) { toast('Give the page a name.'); return; }
   const st = slugStatus(slugRaw, p.id);
@@ -796,6 +803,7 @@ function saveExternalPage(id) {
   p.tracking.channel = channel;
   p.tracking.channelId = channelId;
   p.tracking.pixelId = pixelId;
+  p.tracking.capiToken = capiToken;
   p.tracking.botToken = botToken;
   p.tracking.smart = !!botToken;
   saveDB(); toast('External page saved — tracking is live once the code is on your page'); render();
@@ -1482,9 +1490,6 @@ function renderPublicPage(slug, app) {
     const fr = document.getElementById('html-full-frame');
     if (fr) setFrameSrcdoc(fr, p.htmlCode || '', 'html-full', 200, 900);
     logEvent(p.id, 'view');
-    if (p.tracking && p.tracking.capiToken) {
-      fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view', slug: p.slug, ts: Date.now() }) }).catch(() => {});
-    }
     return;
   }
   app.innerHTML = `<div class="public-page">${p.blocks.map(b => blockHTML(b, p, 'public')).join('')}</div>
@@ -1492,10 +1497,6 @@ function renderPublicPage(slug, app) {
   logEvent(p.id, 'view');
   wireAutoFrames(app); /* arm resize fallbacks for any Raw HTML blocks */
   tickCountdowns();
-  // Fire a CAPI-side ping for the view (best-effort, never blocks the page)
-  if (p.tracking && p.tracking.capiToken) {
-    fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view', slug: p.slug, ts: Date.now() }) }).catch(() => {});
-  }
 }
 
 /* ---------- Analytics ---------- */
@@ -1527,6 +1528,7 @@ function renderAnalytics(app) {
       <div class="stat"><b>${c('click')}</b><span>Clicks</span></div>
       <div class="stat"><b>${c('join_request')}</b><span>Join requests (${uniq('join_request')} unique)</span></div>
       <div class="stat"><b>${c('join')}</b><span>Confirmed joins (${uniq('join')} unique)</span></div>
+      <div class="stat"><b>${c('subscribe')}</b><span>Subscribe (${uniq('subscribe')} unique)</span></div>
     </div>
     <div class="card" style="margin-bottom:20px"><h3 style="margin-top:0">Events — last 7 days</h3><canvas id="chart" width="900" height="260" style="width:100%;height:260px"></canvas>
     <p class="small muted">Bars: views (indigo), clicks (emerald), join requests (amber).</p></div>
@@ -1535,9 +1537,9 @@ function renderAnalytics(app) {
     </div>
     <div class="card"><h3 style="margin-top:0">Per-page breakdown</h3>
     <div style="overflow-x:auto"><table>
-      <thead><tr><th>Page</th><th>Views</th><th>Clicks</th><th>Join req.</th><th>Confirmed</th><th>Join rate*</th></tr></thead>
+      <thead><tr><th>Page</th><th>Views</th><th>Clicks</th><th>Join req.</th><th>Confirmed</th><th>Subscribe</th><th>Join rate*</th></tr></thead>
       <tbody>${pages.map(p => { const s = pageStats(p.id); const rate = s.views ? Math.round(s.joins / s.views * 100) : 0;
-        return `<tr><td><a href="#/p/${esc(p.slug)}" target="_blank">${esc(p.title)}</a></td><td>${s.views}</td><td>${s.clicks}</td><td>${s.joins}</td><td>${s.confirmed}</td><td>${rate}%</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted">No pages yet.</td></tr>'}</tbody>
+        return `<tr><td><a href="#/p/${esc(p.slug)}" target="_blank">${esc(p.title)}</a></td><td>${s.views}</td><td>${s.clicks}</td><td>${s.joins}</td><td>${s.confirmed}</td><td>${s.subscribe}</td><td>${rate}%</td></tr>`; }).join('') || '<tr><td colspan="7" class="muted">No pages yet.</td></tr>'}</tbody>
     </table></div>
     <p class="small muted">* Join rate = join requests ÷ views. Clicks include every CTA tap; joins are the real Telegram requests.</p></div>
   </div>`;
