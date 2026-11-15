@@ -2,9 +2,9 @@
 // No dependencies. Never crashes when env vars are missing.
 // Two jobs:
 //  1. Record REAL confirmed joins: a join request whose chat.username matches
-//     a page's Telegram channel inserts a 'join' event for that page, so the
-//     dashboard's "confirmed joins" number is real. (Private invite-link
-//     channels have no username, so they cannot be matched this way.)
+//     a page's Telegram channel (or whose chat.id matches the page's stored
+//     Channel ID for private invite-link channels) inserts a 'join' event
+//     for that page, so the dashboard's "confirmed joins" number is real.
 //  2. Optional: if META_CAPI_TOKEN and META_PIXEL_ID are set, forward a
 //     confirmed-join event to the Meta Conversions API.
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -38,24 +38,32 @@ module.exports = async (req, res) => {
     console.log('[banaopage/webhook] join_request from user', joinReq.from && joinReq.from.id, 'chat', joinReq.chat && (joinReq.chat.username || joinReq.chat.id));
 
     const username = (joinReq.chat && joinReq.chat.username) || '';
-    /* 1. Record the confirmed join against the page(s) using this channel. */
-    if (username && SUPABASE_URL && KEY && typeof fetch === 'function') {
+    const chatId = joinReq.chat && joinReq.chat.id != null ? String(joinReq.chat.id) : '';
+    /* 1. Record the confirmed join against the page(s) using this channel —
+       matched by public username, or by numeric channel ID (private channels). */
+    if ((username || chatId) && SUPABASE_URL && KEY && typeof fetch === 'function') {
       try {
-        const r = await sb('pages?' + encodeURIComponent('tracking->>channel') + '=eq.' + encodeURIComponent(username) + '&select=id');
-        if (r.ok) {
-          const pages = await r.json();
-          for (const pg of (Array.isArray(pages) ? pages : [])) {
-            await sb('events', {
-              method: 'POST',
-              body: JSON.stringify([{
-                id: rid(), page_id: String(pg.id), type: 'join',
-                label: '', url: 'https://t.me/' + username,
-                visitor: 'tg_' + String((joinReq.from && joinReq.from.id) || ''),
-                utm_source: '', utm_medium: '', utm_campaign: '', ts: Date.now()
-              }])
-            });
-            console.log('[banaopage/webhook] recorded confirmed join for page', pg.id);
+        const lookups = [];
+        if (username) lookups.push(sb('pages?' + encodeURIComponent('tracking->>channel') + '=eq.' + encodeURIComponent(username) + '&select=id'));
+        if (chatId) lookups.push(sb('pages?' + encodeURIComponent('tracking->>channelId') + '=eq.' + encodeURIComponent(chatId) + '&select=id'));
+        const pageIds = new Set();
+        for (const r of await Promise.all(lookups)) {
+          if (r.ok) {
+            const pages = await r.json();
+            (Array.isArray(pages) ? pages : []).forEach(pg => { if (pg && pg.id) pageIds.add(String(pg.id)); });
           }
+        }
+        for (const pid of pageIds) {
+          await sb('events', {
+            method: 'POST',
+            body: JSON.stringify([{
+              id: rid(), page_id: pid, type: 'join',
+              label: '', url: 'https://t.me/' + (username || ''),
+              visitor: 'tg_' + String((joinReq.from && joinReq.from.id) || ''),
+              utm_source: '', utm_medium: '', utm_campaign: '', ts: Date.now()
+            }])
+          });
+          console.log('[banaopage/webhook] recorded confirmed join for page', pid);
         }
       } catch (err) {
         console.error('[banaopage/webhook] join record failed (non-fatal):', err.message);
