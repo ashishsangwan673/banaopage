@@ -201,3 +201,41 @@ th{color:var(--muted);font-size:.82rem;text-transform:uppercase;letter-spacing:.
   h1{font-size:2rem}
   .blk-features .feat-grid{grid-template-columns:1fr}
 }
+
+/* ---- v2 additions: subdomains, raw HTML, pricing, extra blocks, history ---- */
+.offer-banner{background:#FEF3C7;color:#92400E;text-align:center;padding:10px 16px;font-weight:600;font-size:.92rem;border-bottom:1px solid #FDE68A}
+.offer-banner b{color:#78350F}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+@media (max-width:1000px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:600px){.grid-4{grid-template-columns:1fr}}
+.billing-toggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:0 auto}
+.billing-toggle button{background:#fff;border:none;padding:9px 18px;cursor:pointer;font-weight:700;color:var(--muted)}
+.billing-toggle button.active{background:var(--indigo);color:#fff}
+.price .strike{font-size:1rem;color:var(--muted);text-decoration:line-through;font-weight:500;display:block}
+.price .per-year{font-size:.85rem;color:var(--muted);font-weight:500;display:block;margin-top:2px}
+.code-editor{width:100%;min-height:340px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem;line-height:1.5;padding:14px;border:1px solid var(--line);border-radius:12px;background:#0F172A;color:#E2E8F0;white-space:pre}
+.code-editor:focus{outline:2px solid var(--indigo)}
+.html-preview-frame{width:100%;height:520px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.html-full-frame{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff;z-index:1}
+body.public-mode #site-header,body.public-mode #site-footer{display:none}
+body.public-mode main{min-height:100vh}
+.blk-raw{padding:10px 26px}
+.blk-raw iframe{width:100%;border:0;border-radius:10px;background:#fff;display:block}
+.survey-opts{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:14px}
+.survey-opt{border:1px solid var(--indigo);background:#fff;color:var(--indigo);border-radius:999px;padding:10px 20px;font-weight:700;cursor:pointer;font-size:.95rem}
+.survey-opt:hover{background:var(--indigo);color:#fff}
+.blk-survey{padding:26px;text-align:center}
+.social-row{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:20px 26px}
+.social-btn{display:inline-block;border:1px solid var(--line);background:#fff;border-radius:999px;padding:9px 18px;font-weight:700;color:var(--ink)}
+.social-btn:hover{border-color:var(--indigo);text-decoration:none}
+.menu-row{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;padding:16px 26px;border-bottom:1px solid var(--line)}
+.menu-row a{color:var(--ink);font-weight:600}
+.slug-ok{color:var(--emerald);font-weight:700}
+.slug-bad{color:var(--red);font-weight:700}
+.locked-card{position:relative;opacity:.75}
+.lock-badge{position:absolute;top:12px;right:12px;background:var(--ink);color:#fff;font-size:.75rem;font-weight:700;border-radius:999px;padding:4px 10px}
+.history-item{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.history-item .small{margin:0}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+.note-box{background:var(--indigo-soft);border:1px solid #C7D2FE;border-radius:12px;padding:12px 14px;font-size:.88rem}
+.note-box b{color:var(--indigo-dark)}
