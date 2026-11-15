@@ -74,7 +74,7 @@ function logEvent(pageId, type, extra) {
    pasted page was clipped mid-content. Every HTML iframe now gets a tiny resize
    script injected into its srcdoc; the frame measures its own content height and
    reports it to the parent, which grows the iframe. Works with
-   sandbox="allow-scripts" — postMessage needs no allow-same-origin. */
+   sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation allow-forms" — postMessage needs no allow-same-origin. */
 const BP_RESIZE_MAX = 20000; /* never grow taller than this */
 const BP_RESIZE_FALLBACK_MS = 1500; /* no resize message by then -> use fallback height */
 function bpResizeSnippet(frameId) {
@@ -702,7 +702,7 @@ function blockHTML(b, page, mode) {
     case 'rawhtml': {
       const minH = parseInt(d.height, 10) || 200;
       const fid = 'raw-' + b.id;
-      return `<section class="blk-raw"><iframe sandbox="allow-scripts" data-frame-id="${fid}" data-min-height="${minH}" data-fallback-height="${minH}" srcdoc="${esc(injectResizeScript(d.html || '', fid))}" style="height:${minH}px" title="Custom HTML"></iframe></section>`;
+      return `<section class="blk-raw"><iframe sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation allow-forms" data-frame-id="${fid}" data-min-height="${minH}" data-fallback-height="${minH}" srcdoc="${esc(injectResizeScript(d.html || '', fid))}" style="height:${minH}px" title="Custom HTML"></iframe></section>`;
     }
     case 'survey': return `<section class="blk-survey"><h2>${esc(d.question || 'What do you think?')}</h2><p class="muted">Tap an answer — it is saved to the page owner's Leads inbox.</p>
       <div class="survey-opts">${(d.options || []).map(o => `<button class="survey-opt" data-survey-opt data-page="${page ? page.id : ''}" data-question="${esc(d.question || '')}" data-answer="${esc(o)}">${esc(o)}</button>`).join('')}</div></section>`;
@@ -740,8 +740,14 @@ document.addEventListener('click', e => {
   const tg = e.target.closest('[data-tg-join]');
   if (tg) {
     const pageId = tg.getAttribute('data-page');
+    const channel = (tg.getAttribute('data-channel') || '').replace(/^@/, '');
     logEvent(pageId, 'click', { label: 'telegram_join_button' });
-    openJoinModal(pageId, tg.getAttribute('data-channel'));
+    /* Redirect explicitly: relying on the anchor's default tab-open is fragile
+       (popup blockers / modal re-renders can swallow it). One tab, opened now. */
+    e.preventDefault();
+    const opened = window.open('https://t.me/' + channel, '_blank', 'noopener');
+    if (!opened) toast('Telegram khula nahi — popup allow karo ya khud kholo: t.me/' + channel);
+    openJoinModal(pageId, channel);
     return;
   }
   const cta = e.target.closest('[data-cta]');
@@ -749,7 +755,7 @@ document.addEventListener('click', e => {
     const pageId = cta.getAttribute('data-page');
     if (pageId) logEvent(pageId, 'click', { label: 'cta', url: cta.getAttribute('data-url') || '' });
     const url = cta.getAttribute('data-url') || cta.getAttribute('href') || '#';
-    if (url === '#' || url.startsWith('#')) { e.preventDefault(); toast('This button has no link yet — edit it in the builder.'); }
+    if (url === '#' || url.startsWith('#')) { e.preventDefault(); toast('Is button ka link abhi khaali hai — builder me is block ko select karke Button link bharo, phir Publish karo.'); }
     return;
   }
 });
@@ -909,7 +915,7 @@ function renderHtmlBuilder(p, app) {
       <textarea id="html-editor" class="code-editor" spellcheck="false" oninput="updateHtmlCode(this.value)"></textarea>
       <div id="html-preview-wrap" style="margin-top:16px">
         <h4 style="margin:0 0 8px">Preview</h4>
-        <iframe id="html-preview-frame" class="html-preview-frame" sandbox="allow-scripts" title="HTML preview"></iframe>
+        <iframe id="html-preview-frame" class="html-preview-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation allow-forms" title="HTML preview"></iframe>
       </div>
       <p class="small muted center" style="margin-top:12px">Edits autosave · Preview updates as you type · Publish to make it live</p>
     </div>
@@ -975,7 +981,7 @@ function renderBuilder(pageId, app) {
         <button class="btn btn-sm btn-primary" data-copy="${esc(url)}" data-copy-label="Live link">Copy link</button>
       </div>
       <div class="canvas ${B.device === 'mobile' ? 'mobile' : ''}" id="builder-canvas"></div>
-      <p class="small muted center" style="margin-top:12px">Click a block to edit it · Drag blocks to reorder · Changes autosave when you edit fields</p>
+      <p class="small muted center" style="margin-top:12px">Click a block to edit it · Drag blocks to reorder · Changes autosave when you edit fields · <b>Preview me buttons/links click nahi hote — live page pe test karo.</b></p>
     </div>
     <aside class="inspector" id="inspector"></aside>
   </div>`;
@@ -1130,6 +1136,9 @@ function renderInspector() {
   else if (b.type === 'survey') fields += fieldRow('Question', 'question', d.question) + `<label>Answer options (one per line, 2–4)</label><textarea rows="4" oninput="updateBlockList('options', this.value)">${esc((d.options || []).join('\n'))}</textarea><p class="small muted">On the live page, each tap is saved to your Leads inbox as a survey answer.</p>`;
   else if (b.type === 'social') fields += `<label>Social links — one per line, as "Label | URL"</label><textarea rows="5" oninput="updateLinkList('links', this.value)">${esc((d.links || []).map(l => l.label + ' | ' + l.url).join('\n'))}</textarea><p class="small muted">Telegram, Instagram, YouTube, X, WhatsApp — whatever you list becomes a button.</p>`;
   else if (b.type === 'menu') fields += `<label>Menu links — one per line, as "Label | URL"</label><textarea rows="4" oninput="updateLinkList('links', this.value)">${esc((d.links || []).map(l => l.label + ' | ' + l.url).join('\n'))}</textarea>`;
+  /* Warn loudly when a button has no destination — a '#' button looks dead on the live page. */
+  const linkVal = b.type === 'hero' || b.type === 'pricing' ? d.btnUrl : (b.type === 'button' ? d.url : null);
+  if (linkVal !== null && (!linkVal || linkVal.trim() === '#')) fields += '<div class="note-box" style="margin-top:10px;background:#FFFBEB;border-color:#FDE68A">⚠️ Is button ka link abhi khaali hai — live page pe click karne se kuch nahi hoga. Upar <b>Button link</b> me apna Telegram / offer link daalo.</div>';
   fields += '<hr style="margin:18px 0"><div class="inline-row"><button class="btn btn-sm" onclick="dupBlock(\'' + b.id + '\')">Duplicate block</button><button class="btn btn-sm btn-danger" onclick="delBlock(\'' + b.id + '\')">Delete block</button></div>';
   el.innerHTML = tabs + fields;
 }
@@ -1262,7 +1271,7 @@ function renderPublicPage(slug, app) {
     /* Full-page pasted HTML: a normal-flow iframe that grows to the content, so
        the whole pasted page renders as one scrolling page with the footer below.
        (Was position:fixed + height:100% — content was trapped in a viewport frame.) */
-    app.innerHTML = '<iframe id="html-full-frame" class="html-full-frame" sandbox="allow-scripts" title="' + esc(p.title) + '"></iframe>' +
+    app.innerHTML = '<iframe id="html-full-frame" class="html-full-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation allow-forms" title="' + esc(p.title) + '"></iframe>' +
       '<div class="wrap center small muted" style="padding:18px 0 30px">Made with <a href="/">BanaoPage</a> — landing pages + Telegram tracking</div>';
     const fr = document.getElementById('html-full-frame');
     if (fr) setFrameSrcdoc(fr, p.htmlCode || '', 'html-full', 200, 900);
