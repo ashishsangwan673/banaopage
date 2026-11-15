@@ -215,8 +215,8 @@ th{color:var(--muted);font-size:.82rem;text-transform:uppercase;letter-spacing:.
 .price .per-year{font-size:.85rem;color:var(--muted);font-weight:500;display:block;margin-top:2px}
 .code-editor{width:100%;min-height:340px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem;line-height:1.5;padding:14px;border:1px solid var(--line);border-radius:12px;background:#0F172A;color:#E2E8F0;white-space:pre}
 .code-editor:focus{outline:2px solid var(--indigo)}
-.html-preview-frame{width:100%;height:520px;border:1px solid var(--line);border-radius:12px;background:#fff}
-.html-full-frame{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff;z-index:1}
+.html-preview-frame{width:100%;min-height:520px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.html-full-frame{width:100%;min-height:100vh;border:0;background:#fff;display:block}
 body.public-mode #site-header,body.public-mode #site-footer{display:none}
 body.public-mode main{min-height:100vh}
 .blk-raw{padding:10px 26px}
@@ -237,5 +237,6 @@ body.public-mode main{min-height:100vh}
 .history-item{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
 .history-item .small{margin:0}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+.untitled-hint{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;border-radius:999px;padding:3px 10px;font-size:.8rem;font-weight:600}
 .note-box{background:var(--indigo-soft);border:1px solid #C7D2FE;border-radius:12px;padding:12px 14px;font-size:.88rem}
 .note-box b{color:var(--indigo-dark)}
