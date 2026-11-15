@@ -613,11 +613,13 @@ function duplicatePage(id) {
   DB.pages.push(copy); saveDB(); toast('Page duplicated'); render();
 }
 function deletePage(id) {
-  if (!confirm('Delete this page? Its analytics and leads will also be removed.')) return;
-  DB.pages = DB.pages.filter(p => p.id !== id);
-  DB.events = DB.events.filter(e => e.pageId !== id);
-  DB.leads = DB.leads.filter(l => l.pageId !== id);
-  saveDB(); toast('Page deleted'); render();
+  const p = DB.pages.find(x => x.id === id);
+  confirmModal('Delete this page?', '“' + (p ? p.title : 'This page') + '” and its analytics and leads will be permanently removed.', 'Delete page', () => {
+    DB.pages = DB.pages.filter(x => x.id !== id);
+    DB.events = DB.events.filter(e => e.pageId !== id);
+    DB.leads = DB.leads.filter(l => l.pageId !== id);
+    saveDB(); toast('Page deleted'); render();
+  });
 }
 
 /* ---------- Templates ---------- */
@@ -788,6 +790,24 @@ function openJoinModal(pageId, channel) {
   </div>`;
 }
 function closeModal() { $('#modal-root').innerHTML = ''; }
+/* In-app confirmation (native confirm() is suppressed in some browsers/webviews,
+   which made Delete silently do nothing). */
+let _confirmAction = null;
+function confirmModal(title, message, confirmLabel, fn) {
+  _confirmAction = fn;
+  $('#modal-root').innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <h3 style="margin-top:0">${esc(title)}</h3>
+      <p class="muted">${esc(message)}</p>
+      <div class="inline-row" style="justify-content:flex-end;margin-top:18px">
+        <button class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-danger" onclick="runConfirmAction()">${esc(confirmLabel || 'Delete')}</button>
+      </div>
+    </div>
+  </div>`;
+}
+function runConfirmAction() { const fn = _confirmAction; _confirmAction = null; closeModal(); if (fn) fn(); }
 function simulateJoin(pageId) {
   const page = DB.pages.find(p => p.id === pageId);
   const btn = $('#simulate-join-btn'); if (btn) btn.disabled = true;
@@ -1355,8 +1375,9 @@ function exportCSV() {
   toast('CSV downloaded (' + (rows.length - 1) + ' events)');
 }
 function clearDemoData() {
-  if (!confirm('Clear all analytics events and leads? Your pages stay. This cannot be undone.')) return;
-  DB.events = []; DB.leads = []; saveDB(); toast('Analytics + leads cleared'); render();
+  confirmModal('Clear analytics + leads?', 'All analytics events and leads will be removed. Your pages stay. This cannot be undone.', 'Clear data', () => {
+    DB.events = []; DB.leads = []; saveDB(); toast('Analytics + leads cleared'); render();
+  });
 }
 
 /* ---------- Leads ---------- */
@@ -1426,10 +1447,11 @@ function saveProfile() {
   user.name = v; saveDB(); toast('Profile saved'); render();
 }
 function resetAllData() {
-  if (!confirm('This clears ALL BanaoPage data in this browser (accounts, pages, events, leads) and logs you out. Continue?')) return;
-  localStorage.removeItem(DB_KEY);
-  DB = defaultDB(); seedDemo();
-  location.hash = '#/'; render(); toast('All data reset — demo content re-seeded');
+  confirmModal('Reset everything?', 'This clears ALL BanaoPage data in this browser (accounts, pages, events, leads) and logs you out.', 'Reset all', () => {
+    localStorage.removeItem(DB_KEY);
+    DB = defaultDB(); seedDemo();
+    location.hash = '#/'; render(); toast('All data reset — demo content re-seeded');
+  });
 }
 
 /* ---------- Boot ---------- */
