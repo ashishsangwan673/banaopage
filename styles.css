@@ -219,6 +219,14 @@ th{color:var(--muted);font-size:.82rem;text-transform:uppercase;letter-spacing:.
 .html-full-frame{width:100%;min-height:100vh;border:0;background:#fff;display:block}
 body.public-mode #site-header,body.public-mode #site-footer{display:none}
 body.public-mode main{min-height:100vh}
+/* html.public-mode is set by the inline <head> script before first paint, so a
+   public landing-page link never flashes the site header/footer. */
+html.public-mode #site-header,html.public-mode #site-footer{display:none}
+html.public-mode main{min-height:100vh}
+/* Minimal neutral loader while a public page is fetched from the cloud. */
+.public-loading{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.public-spinner{width:34px;height:34px;border-radius:50%;border:3px solid #e5e7eb;border-top-color:#4f46e5;animation:bp-spin .8s linear infinite}
+@keyframes bp-spin{to{transform:rotate(360deg)}}
 .blk-raw{padding:10px 26px}
 .blk-raw iframe{width:100%;border:0;border-radius:10px;background:#fff;display:block}
 .survey-opts{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:14px}
