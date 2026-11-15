@@ -69,6 +69,81 @@ function logEvent(pageId, type, extra) {
   DB.events.push(ev); saveDB(); return ev;
 }
 
+/* ---------- Auto-resizing HTML iframes ---------- */
+/* BUG FIX (15 Nov 2026): Raw HTML iframes used a fixed 200px height, so any tall
+   pasted page was clipped mid-content. Every HTML iframe now gets a tiny resize
+   script injected into its srcdoc; the frame measures its own content height and
+   reports it to the parent, which grows the iframe. Works with
+   sandbox="allow-scripts" — postMessage needs no allow-same-origin. */
+const BP_RESIZE_MAX = 20000; /* never grow taller than this */
+const BP_RESIZE_FALLBACK_MS = 1500; /* no resize message by then -> use fallback height */
+function bpResizeSnippet(frameId) {
+  return '<script>/* BanaoPage auto-resize */\n' +
+  '(function(){var id=' + JSON.stringify(frameId) + ';' +
+  'function send(){try{var d=document.documentElement;var b=document.body;' +
+  'var h=Math.max(d?d.scrollHeight:0,d?d.offsetHeight:0,b?b.scrollHeight:0,b?b.offsetHeight:0,0);' +
+  'if(h>0)parent.postMessage({type:"banaopage-resize",id:id,height:h},"*");}catch(e){}}' +
+  'function watch(){try{var imgs=document.images;for(var i=0;i<imgs.length;i++){if(!imgs[i]._bpWatched){imgs[i]._bpWatched=true;imgs[i].addEventListener("load",send);}}}catch(e){}}' +
+  'window.addEventListener("load",function(){watch();send();});' +
+  'window.addEventListener("resize",send);' +
+  'try{var mo=new MutationObserver(function(){watch();send();});mo.observe(document.documentElement,{childList:true,subtree:true,attributes:true});}catch(e){}' +
+  'var n=0;var iv=setInterval(function(){watch();send();if(++n>=10)clearInterval(iv);},500);' +
+  'watch();send();})();</script>';
+}
+/* Inject the resize snippet before </body> (or append it for fragments / pages
+   without a </body>). Never throws, never alters the user's own markup otherwise. */
+function injectResizeScript(html, frameId) {
+  const code = String(html || '');
+  const snippet = bpResizeSnippet(frameId);
+  if (/<\/body\s*>/i.test(code)) return code.replace(/<\/body\s*>/i, function () { return snippet + '</body>'; });
+  return code + snippet;
+}
+/* Parent side: ONE listener, registered once at boot. Grows the matching iframe
+   (found by data-frame-id) to the reported content height. */
+window.addEventListener('message', function (e) {
+  const d = e && e.data;
+  if (!d || d.type !== 'banaopage-resize' || typeof d.id !== 'string') return;
+  const h = parseInt(d.height, 10);
+  if (!isFinite(h) || h <= 0) return;
+  const frames = document.querySelectorAll('iframe[data-frame-id]');
+  for (let i = 0; i < frames.length; i++) {
+    if (frames[i].getAttribute('data-frame-id') === d.id) {
+      frames[i]._bpResized = true;
+      frames[i].style.height = Math.max(200, Math.min(h, BP_RESIZE_MAX)) + 'px';
+    }
+  }
+});
+/* Give an iframe injected srcdoc + arm the fallback: if no resize message
+   arrives within ~1.5s (scripts blocked etc.), grow to the fallback height so
+   the frame is never left clipped at its small minimum. */
+function setFrameSrcdoc(fr, html, frameId, minHeight, fallbackHeight) {
+  if (!fr) return;
+  const minH = minHeight || 200;
+  fr.setAttribute('data-frame-id', frameId);
+  fr.setAttribute('data-min-height', String(minH));
+  fr.setAttribute('data-fallback-height', String(fallbackHeight || minH));
+  fr._bpResized = false;
+  fr.style.height = minH + 'px';
+  fr.srcdoc = injectResizeScript(html || '', frameId);
+  const fb = Math.max(minH, fallbackHeight || minH);
+  setTimeout(function () {
+    if (fr.isConnected && !fr._bpResized) fr.style.height = fb + 'px';
+  }, BP_RESIZE_FALLBACK_MS);
+}
+/* Arm fallbacks for iframes already in the DOM (e.g. raw-html blocks rendered
+   from an HTML string in blockHTML). */
+function wireAutoFrames(root) {
+  $$('iframe[data-frame-id]', root || document).forEach(function (fr) {
+    const minH = parseInt(fr.getAttribute('data-min-height'), 10) || 200;
+    const fb = parseInt(fr.getAttribute('data-fallback-height'), 10) || minH;
+    fr._bpResized = false;
+    if (!fr.style.height) fr.style.height = minH + 'px';
+    setTimeout(function () {
+      if (fr.isConnected && !fr._bpResized) fr.style.height = Math.max(minH, fb) + 'px';
+    }, BP_RESIZE_FALLBACK_MS);
+  });
+}
+
 /* ---------- Block library ---------- */
 const BLOCK_TYPES = [
   { type: 'hero', icon: '🦸', label: 'Hero', def: () => ({ title: 'Your headline goes here', sub: 'A short, clear line that tells visitors exactly what they get — and why they should care.', btnLabel: 'Get Started', btnUrl: '#', bg: '#EEF2FF', color: '#111827', align: 'center' }) },
@@ -622,7 +697,11 @@ function blockHTML(b, page, mode) {
     case 'divider': return `<section class="blk-divider"><hr></section>`;
     case 'telegram': return `<section class="blk-telegram"><h2>${esc(d.label || 'Join our Telegram Channel')}</h2><p class="muted">${esc(d.sub || '')}</p>
       <a class="tg-btn" href="https://t.me/${esc(d.channel || 'banaopage')}" target="_blank" rel="noopener" data-tg-join data-page="${page ? page.id : ''}" data-channel="${esc(d.channel || 'banaopage')}">✈️ Join @${esc(d.channel || 'banaopage')}</a></section>`;
-    case 'rawhtml': return `<section class="blk-raw"><iframe sandbox="allow-scripts" srcdoc="${esc(d.html || '')}" style="height:${parseInt(d.height, 10) || 200}px" title="Custom HTML"></iframe></section>`;
+    case 'rawhtml': {
+      const minH = parseInt(d.height, 10) || 200;
+      const fid = 'raw-' + b.id;
+      return `<section class="blk-raw"><iframe sandbox="allow-scripts" data-frame-id="${fid}" data-min-height="${minH}" data-fallback-height="${minH}" srcdoc="${esc(injectResizeScript(d.html || '', fid))}" style="height:${minH}px" title="Custom HTML"></iframe></section>`;
+    }
     case 'survey': return `<section class="blk-survey"><h2>${esc(d.question || 'What do you think?')}</h2><p class="muted">Tap an answer — it is saved to the page owner's Leads inbox.</p>
       <div class="survey-opts">${(d.options || []).map(o => `<button class="survey-opt" data-survey-opt data-page="${page ? page.id : ''}" data-question="${esc(d.question || '')}" data-answer="${esc(o)}">${esc(o)}</button>`).join('')}</div></section>`;
     case 'social': return `<section class="social-row">${(d.links || []).map(l => `<a class="social-btn" href="${esc(l.url || '#')}" target="_blank" rel="noopener" data-cta data-page="${page ? page.id : ''}" data-url="${esc(l.url || '#')}">${esc(l.label || 'Link')}</a>`).join('')}</section>`;
@@ -798,6 +877,7 @@ function renderHtmlBuilder(p, app) {
       <div class="builder-bar">
         <b>${esc(p.title)}</b>
         <span class="tag ${p.status === 'live' ? 'tag-live' : 'tag-draft'}">${p.status === 'live' ? '● Live' : '○ Draft'}</span>
+        ${/^untitled-/.test(p.slug || '') ? '<span class="untitled-hint">⚠ Address abhi ' + esc(p.slug) + ' hai — SEO &amp; Link tab me apna naam daal lo.</span>' : ''}
         <span class="autosave" id="autosave"></span>
         <span class="spacer"></span>
         <button class="btn btn-sm" onclick="showHistory()">🕘 History</button>
@@ -816,28 +896,28 @@ function renderHtmlBuilder(p, app) {
     <aside class="inspector" id="inspector"></aside>
   </div>`;
   const ed = $('#html-editor'); if (ed) ed.value = p.htmlCode || '';
-  const fr = $('#html-preview-frame'); if (fr) fr.srcdoc = p.htmlCode || '';
+  const fr = $('#html-preview-frame'); if (fr) setFrameSrcdoc(fr, p.htmlCode || '', 'html-preview', 520, 900);
   renderInspector();
   saveBuilder(true);
 }
 function updateHtmlCode(v) {
   const p = builderPage(); if (!p) return;
   p.htmlCode = v; saveDB(); saveBuilder(true);
-  const fr = $('#html-preview-frame'); if (fr) fr.srcdoc = v;
+  const fr = $('#html-preview-frame'); if (fr) setFrameSrcdoc(fr, v, 'html-preview', 520, 900);
 }
 function useSampleHtml() {
   const p = builderPage(); if (!p) return;
   pushUndoLight();
   p.htmlCode = SAMPLE_HTML; saveDB(); saveBuilder(true);
   const ed = $('#html-editor'); if (ed) ed.value = SAMPLE_HTML;
-  const fr = $('#html-preview-frame'); if (fr) fr.srcdoc = SAMPLE_HTML;
+  const fr = $('#html-preview-frame'); if (fr) setFrameSrcdoc(fr, SAMPLE_HTML, 'html-preview', 520, 900);
   toast('Sample HTML loaded — edit it and publish');
 }
 function toggleHtmlPreview() {
   const w = $('#html-preview-wrap'); if (!w) return;
   const hidden = w.style.display === 'none';
   w.style.display = hidden ? '' : 'none';
-  if (hidden) { const p = builderPage(); const fr = $('#html-preview-frame'); if (fr && p) fr.srcdoc = p.htmlCode || ''; }
+  if (hidden) { const p = builderPage(); const fr = $('#html-preview-frame'); if (fr && p) setFrameSrcdoc(fr, p.htmlCode || '', 'html-preview', 520, 900); }
 }
 function renderBuilder(pageId, app) {
   const user = currentUser();
@@ -860,6 +940,7 @@ function renderBuilder(pageId, app) {
       <div class="builder-bar">
         <b>${esc(p.title)}</b>
         <span class="tag ${p.status === 'live' ? 'tag-live' : 'tag-draft'}">${p.status === 'live' ? '● Live' : '○ Draft'}</span>
+        ${/^untitled-/.test(p.slug || '') ? '<span class="untitled-hint">⚠ Address abhi ' + esc(p.slug) + ' hai — SEO &amp; Link tab me apna naam daal lo.</span>' : ''}
         <span class="autosave" id="autosave"></span>
         <span class="spacer"></span>
         <div class="seg">
@@ -896,8 +977,7 @@ function renderBuilderCanvas() {
       ${blockHTML(b, p, 'builder')}
     </div>`).join('');
   $$('.block', c).forEach(el => {
-    el.addEventListener('click', e => { if (e.target.closest('.block-tools')) return; e.preventDefault(); B.selected = el.getAttribute('data-block-id'); B.tab = 'design'; renderBuilderCanvas(); renderInspector(); });
-    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', el.getAttribute('data-index')); el.classList.add('dragging'); });
+    el.addEventListener('click', e => { if (e.target.closest('.block-tools')) return; e.preventDefault(); B.selected = el.getAttribute('data-block-id'); B.tab = 'design'; renderBuilderCanvas(); renderInspector(); });    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', el.getAttribute('data-index')); el.classList.add('dragging'); });
     el.addEventListener('dragend', () => el.classList.remove('dragging'));
     el.addEventListener('dragover', e => e.preventDefault());
     el.addEventListener('drop', e => {
@@ -912,6 +992,7 @@ function renderBuilderCanvas() {
       saveDB(); renderBuilderCanvas(); renderInspector(); saveBuilder(true);
     });
   });
+  wireAutoFrames(c); /* arm resize fallbacks for any Raw HTML blocks on the canvas */
   tickCountdowns();
 }
 function setDevice(d) { B.device = d; render(); }
@@ -954,6 +1035,18 @@ function updateBlockField(field, value) {
   const b = selectedBlock(); if (!b) return;
   pushUndoLight();
   b.data[field] = value; saveDB(); renderBuilderCanvas(); saveBuilder(true);
+}
+/* A Raw HTML block holding a whole page belongs in Paste-HTML mode: move its
+   code onto the page itself and drop the block. */
+function convertRawBlockToHtmlPage() {
+  const p = builderPage(); const b = selectedBlock(); if (!p || !b) return;
+  pushUndo();
+  p.htmlCode = b.data.html || '';
+  p.mode = 'html';
+  p.blocks = p.blocks.filter(x => x.id !== b.id);
+  B.selected = null; B.tab = 'design';
+  saveDB(); toast('Converted to a Paste-HTML page — publish it to go live');
+  render();
 }
 let _undoLight = 0;
 function pushUndoLight() { const now = Date.now(); if (now - _undoLight > 800) { pushUndo(); _undoLight = now; } }
@@ -1008,7 +1101,12 @@ function renderInspector() {
   else if (b.type === 'video') fields += fieldRow('Section title', 'title', d.title) + fieldRow('YouTube URL', 'url', d.url);
   else if (b.type === 'divider') fields += '<p class="muted">A simple horizontal line. Nothing to edit.</p>';
   else if (b.type === 'telegram') fields += fieldRow('Channel username (without @)', 'channel', d.channel) + fieldRow('Heading', 'label', d.label) + fieldRow('Subtext', 'sub', d.sub) + '<p class="small muted">The button opens t.me/' + esc(d.channel || '…') + ' and logs a click. With Smart Tracking on, join requests are tracked too.</p>';
-  else if (b.type === 'rawhtml') fields += `<label>HTML / CSS / JS code</label><textarea class="code-editor" style="min-height:220px" rows="10" onchange="updateBlockField('html', this.value)">${esc(d.html || '')}</textarea><p class="small muted">Renders in a sandboxed frame — your code can never break the dashboard. Applied when you leave this box.</p>` + fieldRow('Frame height (px)', 'height', d.height, 'number');
+  else if (b.type === 'rawhtml') {
+    const looksFullPage = /(<!doctype|<html)/i.test(d.html || '');
+    fields += `<label>HTML / CSS / JS code</label><textarea class="code-editor" style="min-height:220px" rows="10" onchange="updateBlockField('html', this.value)">${esc(d.html || '')}</textarea>` +
+      (looksFullPage ? `<div class="note-box" style="margin-top:10px;background:#FFFBEB;border-color:#FDE68A">⚠️ Ye poora page lag raha hai — poora page live karne ke liye <b>'Paste HTML' page mode</b> behtar hai, warna lamba content cut sakta hai.<br><button class="btn btn-sm" style="margin-top:8px" onclick="convertRawBlockToHtmlPage()">Convert to HTML page →</button></div>` : '') +
+      `<p class="small muted">Renders in a sandboxed frame — your code can never break the dashboard. Applied when you leave this box. The frame grows to fit your content automatically.</p>` + fieldRow('Minimum height (px)', 'height', d.height, 'number');
+  }
   else if (b.type === 'survey') fields += fieldRow('Question', 'question', d.question) + `<label>Answer options (one per line, 2–4)</label><textarea rows="4" oninput="updateBlockList('options', this.value)">${esc((d.options || []).join('\n'))}</textarea><p class="small muted">On the live page, each tap is saved to your Leads inbox as a survey answer.</p>`;
   else if (b.type === 'social') fields += `<label>Social links — one per line, as "Label | URL"</label><textarea rows="5" oninput="updateLinkList('links', this.value)">${esc((d.links || []).map(l => l.label + ' | ' + l.url).join('\n'))}</textarea><p class="small muted">Telegram, Instagram, YouTube, X, WhatsApp — whatever you list becomes a button.</p>`;
   else if (b.type === 'menu') fields += `<label>Menu links — one per line, as "Label | URL"</label><textarea rows="4" oninput="updateLinkList('links', this.value)">${esc((d.links || []).map(l => l.label + ' | ' + l.url).join('\n'))}</textarea>`;
@@ -1141,10 +1239,13 @@ function renderPublicPage(slug, app) {
     }
   }
   if (p.mode === 'html') {
-    /* Full-page pasted HTML: render exactly as written, full viewport, sandboxed. */
-    app.innerHTML = '<iframe id="html-full-frame" class="html-full-frame" sandbox="allow-scripts" title="' + esc(p.title) + '"></iframe>';
+    /* Full-page pasted HTML: a normal-flow iframe that grows to the content, so
+       the whole pasted page renders as one scrolling page with the footer below.
+       (Was position:fixed + height:100% — content was trapped in a viewport frame.) */
+    app.innerHTML = '<iframe id="html-full-frame" class="html-full-frame" sandbox="allow-scripts" title="' + esc(p.title) + '"></iframe>' +
+      '<div class="wrap center small muted" style="padding:18px 0 30px">Made with <a href="/">BanaoPage</a> — landing pages + Telegram tracking</div>';
     const fr = document.getElementById('html-full-frame');
-    if (fr) fr.srcdoc = p.htmlCode || '';
+    if (fr) setFrameSrcdoc(fr, p.htmlCode || '', 'html-full', 200, 900);
     logEvent(p.id, 'view');
     if (p.tracking && p.tracking.capiToken) {
       fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view', slug: p.slug, ts: Date.now() }) }).catch(() => {});
@@ -1154,6 +1255,7 @@ function renderPublicPage(slug, app) {
   app.innerHTML = `<div class="public-page">${p.blocks.map(b => blockHTML(b, p, 'public')).join('')}</div>
   <div class="wrap center small muted" style="padding:18px 0 30px">Made with <a href="/">BanaoPage</a> — landing pages + Telegram tracking</div>`;
   logEvent(p.id, 'view');
+  wireAutoFrames(app); /* arm resize fallbacks for any Raw HTML blocks */
   tickCountdowns();
   // Fire a CAPI-side ping for the view (best-effort, never blocks the page)
   if (p.tracking && p.tracking.capiToken) {
@@ -1332,5 +1434,5 @@ function resetAllData() {
 
 /* ---------- Boot ---------- */
 /* Read-only debug handle (handy for testing / support): window.BanaoPage.db() */
-window.BanaoPage = { db: () => DB, PLANS, slugStatus, subdomainFromHostname, resolvePublicPageFromUrl, buildExportHTML };
+window.BanaoPage = { db: () => DB, PLANS, slugStatus, subdomainFromHostname, resolvePublicPageFromUrl, buildExportHTML, injectResizeScript, setFrameSrcdoc, wireAutoFrames };
 render();
