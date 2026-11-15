@@ -47,14 +47,14 @@
         var links = document.getElementsByTagName('a');
         for (var i = 0; i < links.length; i++) {
           var href = links[i].getAttribute('href') || '';
-          var m = href.match(/t\.me\/([A-Za-z0-9_]+)/);
+          var m = href.match(/t\.me\/([A-Za-z0-9_+]+)/);
           if (m) { channel = m[1]; return channel; }
         }
       } catch (e) { /* ignore */ }
       return channel;
     }
     function tgChannelOf(href) {
-      var m = String(href || '').match(/t\.me\/([A-Za-z0-9_]+)/);
+      var m = String(href || '').match(/t\.me\/([A-Za-z0-9_+]+)/);
       return m ? m[1] : channelFromLinks();
     }
 
