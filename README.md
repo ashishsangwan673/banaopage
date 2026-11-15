@@ -22,35 +22,46 @@ Demo account (seeded on first run): **demo@banaopage.in / demo1234** — comes w
 vercel deploy        # or: import this folder in the Vercel dashboard
 ```
 
-`vercel.json` rewrites `/p/<slug>` to `index.html` so public pages work on refresh. The `api/` folder becomes two serverless functions automatically.
+`vercel.json` rewrites `/p/<slug>` and `/<slug>` to `index.html` so public pages work on refresh. The `api/` folder becomes two serverless functions automatically.
 
 ## How tracking works
 
-1. **Views & clicks** — counted in the browser when someone opens a public page (`#/p/<slug>`) or taps a CTA. Stored in `localStorage` under key `banaopage_db_v1`.
+1. **Views & clicks** — counted in the browser when someone opens a public page (`/<slug>` or the old `#/p/<slug>`) or taps a CTA. Stored in `localStorage` under key `banaopage_db_v1`.
 2. **Telegram Join button** — opens `t.me/<channel>` in a new tab and logs a Click. The modal offers **"Simulate join request arriving"**, which logs a Join Request and, after 2 seconds, a Confirmed Join — so analytics visibly moves without a real bot.
 3. **Real Telegram tracking (optional)** — in the builder's **Tracking** tab, paste a bot token (from @BotFather) and your channel, then set your bot webhook to `https://<your-domain>/api/telegram-webhook`. Telegram then POSTs `chat_join_request` updates to `api/telegram-webhook.js`. The **Test Telegram Bot** button really calls `https://api.telegram.org/bot<token>/getMe` and shows the bot username or the real error.
 4. **Meta Conversions API (optional)** — if `META_CAPI_TOKEN` and `META_PIXEL_ID` env vars are set on Vercel, the webhook forwards join requests to Meta as a server event. Without them it just acknowledges the update and never crashes. The **Send Test CAPI Event** button POSTs to `/api/track` to prove the endpoint responds.
 
-## Plans (simulated)
+## Plans (simulated — real Pagebanao tiers)
 
-| Plan | Price | Pages | Smart Tracking |
-|------|-------|-------|----------------|
-| Free | ₹0 | 3 | 1 page, 72-hour trial |
-| Starter | ₹499/mo | 10 | 2 pages |
-| Pro | ₹999/mo | Unlimited | 10 pages |
+| Plan | Price | Pages | Smart Tracking | Analytics | Templates |
+|------|-------|-------|----------------|-----------|-----------|
+| Free | ₹0 | 3 | 1 page, 72-hour trial | 7 days | 5 |
+| Starter | ₹1,999/mo or ₹19,190/yr | 7 | 2 pages | 30 days + CSV | 20 |
+| Growth | ₹4,999/mo or ₹47,990/yr | 20 | 8 pages | 90 days + CSV + UTM | 50 |
+| Business Pro | ₹14,999/mo or ₹1,43,990/yr | Unlimited (fair use) | 50 pages | Full history + CSV + UTM | 100 |
 
-Upgrades are simulated in Settings — they change limits in localStorage; no payment is taken.
+Upgrades are simulated in Settings — they change limits in localStorage; no payment is taken. Launch offer: free Smart Tracking on 2 landing pages till 30 Nov, 11:59 pm.
+
+## Page addresses (subdomain-style)
+
+Every page's slug is its address. The **working link** is `https://banaopage.vercel.app/<slug>` (path-based, served by the `/:slug` rewrite). The same page also opens at `<slug>.banaopage.vercel.app` — and at `<slug>.<your-domain>` — **once a custom domain with wildcard DNS is connected** (add the domain in the Vercel dashboard, then a wildcard DNS record `*.yourdomain.com` → Vercel). On the free `vercel.app` domain, Vercel does not route arbitrary `<slug>.banaopage.vercel.app` subdomains to the project, so the UI always shows the working `/<slug>` link first and labels the subdomain form honestly. Old `#/p/<slug>` links keep working.
+
+## Raw HTML
+
+- **"Paste HTML" page** (Dashboard → Paste HTML, or Templates): paste a complete HTML document; it renders full-screen in a sandboxed iframe when published, exactly as written.
+- **Raw HTML block**: drop into any block-built page; renders in a sandboxed iframe in the builder preview and on the live page.
+- **Export HTML** (dashboard row / builder bar): downloads a standalone `.html` file — the pasted code verbatim for HTML pages, or a self-contained render for block pages.
 
 ## Features
 
 - Landing homepage (hero, features, how-it-works, templates, pricing, FAQ, footer)
 - Signup/login with local demo auth + session persistence
-- Dashboard with stats, plan-usage bar, search, duplicate/delete
-- 6 templates: Telegram Channel, Trading Signals, Online Course, Ebook Sale, Product Launch, Webinar/Event
-- Drag-and-drop builder: 13 block types, inline inspector, device preview, undo, autosave, publish, SEO fields
-- Public pages with view/click counting, lead forms, Telegram join flow
-- Analytics: totals, per-page table, 7-day canvas bar chart, CSV export
-- Leads inbox, per-page Smart Tracking settings, webhook URL display
+- Dashboard with stats, plan-usage bar, search, duplicate/delete, live link + subdomain address per page
+- 6 templates: Telegram Channel, Trading Signals, Online Course, Ebook Sale, Product Launch, Webinar/Event (Free plan: first 5)
+- Drag-and-drop builder: 17 block types (incl. Raw HTML, Survey/Question, Social Links, Menu), inline inspector, device preview, undo, autosave, publish, SEO fields, per-page history (last 5 snapshots, Restore)
+- Public pages with view/click counting, lead forms, survey answers, Telegram join flow
+- Analytics: totals, per-page table, 7-day canvas bar chart, CSV export (paid plans), UTM source/campaign report (Growth/Business Pro), plan-based history window (7/30/90 days / full)
+- Leads inbox (incl. survey answers), per-page Smart Tracking settings, webhook URL display
 
 ## Honest limitation
 
