@@ -23,9 +23,17 @@ module.exports = async (req, res) => {
   const cloudOff = () => res.status(503).json({ ok: false, cloud: false, error: 'cloud_not_configured' });
   if (!URL || !KEY) return cloudOff();
 
-  const sb = (path, opts) => fetch(URL.replace(/\/$/, '') + '/rest/v1/' + path, Object.assign({
-    headers: { apikey: KEY, Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json' }
-  }, opts || {}));
+  /* Merge headers — never replace them: an opts.headers (e.g. Prefer on
+     upsert) used to wipe apikey/Authorization via Object.assign, so Supabase
+     answered "No API key found" and no page ever synced. */
+  const sb = (path, opts) => {
+    const o = Object.assign({}, opts || {});
+    o.headers = Object.assign(
+      { apikey: KEY, Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+      (opts && opts.headers) || {}
+    );
+    return fetch(URL.replace(/\/$/, '') + '/rest/v1/' + path, o);
+  };
 
   const readBody = () => {
     try { return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); }
