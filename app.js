@@ -776,7 +776,7 @@ function saveExternalPage(id) {
   const title = ($('#ext-title').value || '').trim();
   const slugRaw = ($('#ext-slug').value || '').trim();
   const url = ($('#ext-url').value || '').trim();
-  const channel = ($('#ext-channel').value || '').trim().replace(/^@/, '');
+  const channel = ($('#ext-channel').value || '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?t\.me\//i, '').replace(/^t\.me\//i, '');
   if (!title) { toast('Give the page a name.'); return; }
   const st = slugStatus(slugRaw, p.id);
   if (!st.ok) { toast(st.msg); return; }
