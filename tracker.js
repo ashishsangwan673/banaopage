@@ -66,6 +66,29 @@
       utm.utm_campaign = q.get('utm_campaign') || '';
     } catch (e) { /* ignore */ }
 
+    /* Meta Pixel (optional): data-pixel="123456789012345" fires PageView on
+       load and Lead when a Telegram join link is clicked — the same two
+       events BanaoPage fires for its own hosted pages. */
+    var pixelId = (script.getAttribute('data-pixel') || '').replace(/\D/g, '');
+    function firePixel(eventName) {
+      try {
+        if (!pixelId) return;
+        var w = window;
+        if (typeof w.fbq !== 'function') {
+          var stub = function () { (stub.queue = stub.queue || []).push(arguments); };
+          stub.queue = [];
+          w.fbq = stub;
+          var s = document.createElement('script');
+          s.async = true;
+          s.src = 'https://connect.facebook.net/en_US/fbevents.js';
+          var head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
+          if (head && head.appendChild) head.appendChild(s);
+        }
+        w.fbq('init', pixelId);
+        w.fbq('track', eventName);
+      } catch (e) { /* pixel must never break the host page */ }
+    }
+
     function send(type, extra) {
       try {
         var payload = {
@@ -88,7 +111,7 @@
     }
 
     /* One view per page load. */
-    function sendView() { send('view', { label: 'embed-tracker' }); }
+    function sendView() { send('view', { label: 'embed-tracker' }); firePixel('PageView'); }
     if (document.readyState === 'complete' || document.readyState === 'interactive') sendView();
     else document.addEventListener('DOMContentLoaded', sendView);
 
@@ -107,6 +130,7 @@
         if (/t\.me\//i.test(href)) {
           send('join_request', { label: text || href, url: href });
           send('click', { label: text || href, url: href });
+          firePixel('Lead');
         } else {
           send('click', { label: text || href, url: href || window.location.href });
         }
