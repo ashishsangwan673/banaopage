@@ -39,30 +39,43 @@ module.exports = async (req, res) => {
     try { return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); }
     catch (e) { return null; }
   };
-  const toRow = p => ({
-    id: String(p.id || ''), slug: String(p.slug || ''), owner: String(p.owner || ''),
-    title: String(p.title || ''), mode: p.mode === 'html' ? 'html' : 'blocks',
-    status: p.status === 'live' ? 'live' : 'draft',
-    blocks: Array.isArray(p.blocks) ? p.blocks : [],
-    html_code: String(p.htmlCode || ''),
-    seo_title: String(p.seoTitle || ''), seo_desc: String(p.seoDesc || ''),
-    tracking: p.tracking && typeof p.tracking === 'object' ? p.tracking : {},
-    history: Array.isArray(p.history) ? p.history.slice(0, 5) : [],
-    created_at: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
-    /* BUG FIX (16 Nov 2026): this used to stamp NOW on every sync, so the
-       cloud copy always looked "newer" than any local edit and pull() would
-       overwrite fresh local edits with stale cloud data on refresh. Use the
-       page's own last-edit time instead, so newest-wins means what it says. */
-    updated_at: p.updatedAt ? new Date(p.updatedAt).toISOString() : new Date().toISOString()
-  });
-  const fromRow = r => ({
-    id: r.id, slug: r.slug, owner: r.owner, title: r.title, mode: r.mode,
-    status: r.status, blocks: r.blocks || [], htmlCode: r.html_code || '',
-    seoTitle: r.seo_title || '', seoDesc: r.seo_desc || '',
-    tracking: r.tracking || {}, history: r.history || [],
-    createdAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
-    updatedAt: r.updated_at ? Date.parse(r.updated_at) : Date.now()
-  });
+  const toRow = p => {
+    const t = (p.tracking && typeof p.tracking === 'object') ? { ...p.tracking } : {};
+    /* BUG FIX (16 Nov 2026): externalUrl was never synced — the pages table
+       has no column for it and toRow dropped it, so pull() wiped the URL on
+       every refresh and the redirect showed "not set up yet". It rides in the
+       tracking JSONB now (no DB migration needed); fromRow lifts it back out. */
+    if (p.externalUrl) t.externalUrl = String(p.externalUrl); else delete t.externalUrl;
+    return {
+      id: String(p.id || ''), slug: String(p.slug || ''), owner: String(p.owner || ''),
+      title: String(p.title || ''), mode: p.mode === 'html' ? 'html' : 'blocks',
+      status: p.status === 'live' ? 'live' : 'draft',
+      blocks: Array.isArray(p.blocks) ? p.blocks : [],
+      html_code: String(p.htmlCode || ''),
+      seo_title: String(p.seoTitle || ''), seo_desc: String(p.seoDesc || ''),
+      tracking: t,
+      history: Array.isArray(p.history) ? p.history.slice(0, 5) : [],
+      created_at: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+      /* BUG FIX (16 Nov 2026): this used to stamp NOW on every sync, so the
+         cloud copy always looked "newer" than any local edit and pull() would
+         overwrite fresh local edits with stale cloud data on refresh. Use the
+         page's own last-edit time instead, so newest-wins means what it says. */
+      updated_at: p.updatedAt ? new Date(p.updatedAt).toISOString() : new Date().toISOString()
+    };
+  };
+  const fromRow = r => {
+    const t = (r.tracking && typeof r.tracking === 'object') ? { ...r.tracking } : {};
+    const externalUrl = t.externalUrl || '';
+    delete t.externalUrl;
+    return {
+      id: r.id, slug: r.slug, owner: r.owner, title: r.title, mode: r.mode,
+      status: r.status, blocks: r.blocks || [], htmlCode: r.html_code || '',
+      seoTitle: r.seo_title || '', seoDesc: r.seo_desc || '',
+      tracking: t, externalUrl, history: r.history || [],
+      createdAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
+      updatedAt: r.updated_at ? Date.parse(r.updated_at) : Date.now()
+    };
+  };
 
   try {
     if (req.method === 'GET') {
