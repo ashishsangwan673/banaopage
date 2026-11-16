@@ -49,7 +49,11 @@ module.exports = async (req, res) => {
     tracking: p.tracking && typeof p.tracking === 'object' ? p.tracking : {},
     history: Array.isArray(p.history) ? p.history.slice(0, 5) : [],
     created_at: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
-    updated_at: new Date().toISOString()
+    /* BUG FIX (16 Nov 2026): this used to stamp NOW on every sync, so the
+       cloud copy always looked "newer" than any local edit and pull() would
+       overwrite fresh local edits with stale cloud data on refresh. Use the
+       page's own last-edit time instead, so newest-wins means what it says. */
+    updated_at: p.updatedAt ? new Date(p.updatedAt).toISOString() : new Date().toISOString()
   });
   const fromRow = r => ({
     id: r.id, slug: r.slug, owner: r.owner, title: r.title, mode: r.mode,
