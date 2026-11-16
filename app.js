@@ -115,6 +115,19 @@ const Cloud = {
       });
     }, 900);
   },
+  /* Immediate push (16 Nov 2026): used right after an explicit Save, so a
+     fast refresh can't lose the edit while the 900ms debounce is pending. */
+  syncNow() {
+    if (!currentUser()) return;
+    clearTimeout(this._syncTimer);
+    const u = currentUser(); if (!u) return;
+    this.post({ op: 'sync', owner: u.id, pages: DB.pages.filter(p => p.owner === u.id) }).then(j => {
+      if (j && j.error === 'slug_taken' && this._slugWarned !== j.slug) {
+        this._slugWarned = j.slug;
+        toast('Page address "' + j.slug + '" is already used by another account — rename it in SEO & Link.');
+      }
+    });
+  },
   /* Pull my pages + their events/leads down; newest copy wins per page. */
   pull() {
     const user = currentUser();
@@ -806,7 +819,14 @@ function saveExternalPage(id) {
   p.tracking.capiToken = capiToken;
   p.tracking.botToken = botToken;
   p.tracking.smart = !!botToken;
-  saveDB(); toast('External page saved — tracking is live once the code is on your page'); render();
+  /* BUG FIX (16 Nov 2026): saveExternalPage never bumped updatedAt, while
+     every sync stamps the cloud row with NOW — so on refresh, pull() saw the
+     cloud copy as "newer" and overwrote the just-saved local edits with the
+     old cloud values ("refresh karte hi vaise hi ho jata h"). Bump it here
+     (like saveBuilder does) and push to the cloud immediately, so a fast
+     refresh can no longer lose the edit. */
+  p.updatedAt = Date.now();
+  saveDB(); Cloud.syncNow(); toast('External page saved — tracking is live once the code is on your page'); render();
 }
 function duplicatePage(id) {
   const user = currentUser(); const src = DB.pages.find(p => p.id === id && p.owner === user.id); if (!src) return;
