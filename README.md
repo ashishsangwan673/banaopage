@@ -78,6 +78,7 @@ Your own landing page, hosted anywhere, can use BanaoPage tracking with ONE line
 - Public pages with view/click counting, lead forms, survey answers, Telegram join flow
 - Analytics: totals, per-page table, 7-day canvas bar chart, CSV export (paid plans), UTM source/campaign report (Growth/Business Pro), plan-based history window (7/30/90 days / full)
 - Leads inbox (incl. survey answers), per-page Smart Tracking settings, webhook URL display
+- Telegram Subscribe events: every real join request records a Subscribe event (Analytics, dashboard, per-page stats) and sends Subscribe to Meta's Conversions API using the page's Pixel ID + CAPI token
 
 ## Honest limitation
 
