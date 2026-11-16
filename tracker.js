@@ -89,6 +89,17 @@
       } catch (e) { /* pixel must never break the host page */ }
     }
 
+    /* Transport — BUG FIX (16 Nov 2026): sendBeacon used to go FIRST, and
+       when it returned true the fetch fallback never ran. But a cross-origin
+       beacon carrying an application/json Blob needs a CORS preflight, and if
+       that preflight is dropped the beacon silently vanishes while reporting
+       success — exactly what happened on bulltraders.live: the same-origin
+       test page worked, the cross-origin page sent nothing, in three real
+       browser visits. So: fetch FIRST, with Content-Type: text/plain — a
+       CORS-safelisted type, so no preflight is ever needed and the POST
+       always goes through (/api/track parses the JSON body regardless of the
+       declared type — proven by a text/plain curl landing in Supabase).
+       sendBeacon stays only as the fallback when fetch is unavailable. */
     function send(type, extra) {
       try {
         var payload = {
@@ -98,14 +109,20 @@
           utm_source: utm.utm_source, utm_medium: utm.utm_medium, utm_campaign: utm.utm_campaign
         };
         var body = JSON.stringify(payload);
-        if (window.navigator && typeof window.navigator.sendBeacon === 'function') {
-          try {
-            var blob = new Blob([body], { type: 'application/json' });
-            if (window.navigator.sendBeacon(endpoint, blob)) return;
-          } catch (e) { /* fall through to fetch */ }
-        }
         if (typeof fetch === 'function') {
-          fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
+          try {
+            fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: body, keepalive: true }).catch(function () { sendViaBeacon(body); });
+            return;
+          } catch (e) { /* fall through to beacon */ }
+        }
+        sendViaBeacon(body);
+      } catch (e) { /* never break the host page */ }
+    }
+    function sendViaBeacon(body) {
+      try {
+        if (window.navigator && typeof window.navigator.sendBeacon === 'function') {
+          var blob = new Blob([body], { type: 'text/plain' });
+          window.navigator.sendBeacon(endpoint, blob);
         }
       } catch (e) { /* never break the host page */ }
     }
